@@ -1,0 +1,6 @@
+cache/
+.graphify_python
+.graphify_chunk_*.json
+.graphify_*.json
+.graphify_*.txt
+.graphify_*.py
