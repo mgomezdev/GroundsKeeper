@@ -15,12 +15,19 @@ from backend.app.core.permissions import Permission
 from backend.app.models.ams_label import AmsLabel
 from backend.app.models.printer import Printer
 from backend.app.models.slot_preset import SlotPresetMapping
+from backend.app.models.bambu_printer_config import BambuPrinterConfig
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.schemas.printer import (
     AmsLabelBody,
     AMSTray,
     AMSUnit,
+    BambuPrinterCreate,
+    BambuPrinterUpdate,
     FilaSwitchResponse,
     HMSErrorResponse,
+    MoonrakerPrinterCreate,
+    MoonrakerPrinterStatus,
+    MoonrakerPrinterUpdate,
     NozzleInfoResponse,
     NozzleRackSlot,
     PrinterCreate,
@@ -57,32 +64,77 @@ async def list_printers(
     db: AsyncSession = Depends(get_db),
 ):
     """List all configured printers."""
-    result = await db.execute(select(Printer).order_by(Printer.name))
-    return list(result.scalars().all())
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+        .order_by(Printer.name)
+    )
+    printers = result.scalars().all()
+    return [PrinterResponse.from_orm_with_roi(p) for p in printers]
 
 
 @router.post("/", response_model=PrinterResponse)
 async def create_printer(
-    printer_data: PrinterCreate,
+    printer_data: BambuPrinterCreate | MoonrakerPrinterCreate,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a new printer."""
-    # Check if serial number already exists
-    result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Printer with this serial number already exists")
+    from sqlalchemy.orm import selectinload
 
-    printer = Printer(**printer_data.model_dump())
+    # Build Printer row from common fields only
+    common_fields = {
+        "name": printer_data.name,
+        "printer_type": printer_data.printer_type,
+        "ip_address": printer_data.ip_address,
+        "model": printer_data.model,
+        "location": printer_data.location,
+        "auto_archive": printer_data.auto_archive,
+        "external_camera_url": printer_data.external_camera_url,
+        "external_camera_type": printer_data.external_camera_type,
+        "external_camera_enabled": printer_data.external_camera_enabled,
+        "external_camera_snapshot_url": printer_data.external_camera_snapshot_url,
+        "camera_rotation": printer_data.camera_rotation,
+    }
+    printer = Printer(**common_fields)
     db.add(printer)
-    await db.commit()
-    await db.refresh(printer)
+    await db.flush()  # populate printer.id before creating config row
 
-    # Connect to the printer
+    if isinstance(printer_data, BambuPrinterCreate):
+        # Unique serial number check
+        existing = await db.execute(
+            select(BambuPrinterConfig).where(BambuPrinterConfig.serial_number == printer_data.serial_number)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(400, "Printer with this serial number already exists")
+        db.add(BambuPrinterConfig(
+            printer_id=printer.id,
+            serial_number=printer_data.serial_number,
+            access_code=printer_data.access_code,
+        ))
+    else:
+        db.add(MoonrakerPrinterConfig(
+            printer_id=printer.id,
+            port=printer_data.port,
+            api_key=printer_data.api_key,
+        ))
+
+    await db.commit()
+
+    # Re-fetch with config relationship loaded
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer.id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
+    printer = result.scalar_one()
+
     if printer.is_active:
         await printer_manager.connect_printer(printer)
 
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.get("/usb-cameras")
@@ -231,27 +283,44 @@ async def get_printer(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer_id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.patch("/{printer_id}", response_model=PrinterResponse)
 async def update_printer(
     printer_id: int,
-    printer_data: PrinterUpdate,
+    printer_data: BambuPrinterUpdate | MoonrakerPrinterUpdate,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer_id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+
+    # Vendor-specific fields go to config tables, not the base Printer row
+    bambu_fields = {"access_code"}
+    moonraker_fields = {"port", "api_key"}
+    config_updates = {k: update_data.pop(k) for k in list(update_data) if k in bambu_fields | moonraker_fields}
 
     # Handle nested ROI object - flatten to individual columns
     if "plate_detection_roi" in update_data:
@@ -262,25 +331,33 @@ async def update_printer(
             update_data["plate_detection_roi_w"] = roi.get("w")
             update_data["plate_detection_roi_h"] = roi.get("h")
         else:
-            # Clear ROI if set to null
             update_data["plate_detection_roi_x"] = None
             update_data["plate_detection_roi_y"] = None
             update_data["plate_detection_roi_w"] = None
             update_data["plate_detection_roi_h"] = None
 
-    for field, value in update_data.items():
-        setattr(printer, field, value)
+    for field_name, value in update_data.items():
+        setattr(printer, field_name, value)
+
+    # Apply config-table updates
+    if config_updates:
+        if printer.bambu_config:
+            for k, v in {k: v for k, v in config_updates.items() if k in bambu_fields}.items():
+                setattr(printer.bambu_config, k, v)
+        if printer.moonraker_config:
+            for k, v in {k: v for k, v in config_updates.items() if k in moonraker_fields}.items():
+                setattr(printer.moonraker_config, k, v)
 
     await db.commit()
     await db.refresh(printer)
 
-    # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    needs_reconnect = any(k in update_data for k in ["ip_address", "is_active"]) or bool(config_updates)
+    if needs_reconnect:
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
 
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.delete("/{printer_id}")
@@ -341,19 +418,41 @@ async def delete_printer(
     return {"status": "deleted", "archives_deleted": delete_archives}
 
 
-@router.get("/{printer_id}/status", response_model=PrinterStatus)
+@router.get("/{printer_id}/status")
 async def get_printer_status(
     printer_id: int,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get real-time status of a printer."""
+    """Get real-time status of a printer. Response shape is discriminated by printer_type."""
+    from backend.app.services.elegoo_centauri_client import ElegooState
+    from backend.app.services.moonraker_client import MoonrakerState
+    from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
+
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     state = printer_manager.get_status(printer_id)
+
+    # Elegoo Centauri (SDCP) printers
+    if isinstance(state, ElegooState):
+        status_dict = _elegoo_state_to_dict(state, printer_id)
+        status_dict["name"] = printer.name
+        status_dict["awaiting_plate_clear"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        return MoonrakerPrinterStatus(**status_dict)
+
+    # Moonraker-based printers get their own slimmer response
+    if isinstance(state, MoonrakerState):
+        status_dict = _moonraker_state_to_dict(state, printer_id)
+        status_dict["name"] = printer.name
+        status_dict["awaiting_plate_clear"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        status_dict["cover_url"] = (
+            printer.external_camera_url if printer.external_camera_enabled else None
+        )
+        return MoonrakerPrinterStatus(**status_dict)
+
     if not state:
         return PrinterStatus(
             id=printer_id,
@@ -730,15 +829,21 @@ async def disconnect_printer(
 @router.post("/test")
 async def test_printer_connection(
     ip_address: str,
-    serial_number: str,
-    access_code: str,
+    printer_type: str = "bambu",
+    serial_number: str = "",
+    access_code: str = "",
+    port: int = 7125,
+    api_key: str | None = None,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
     """Test connection to a printer without saving."""
     result = await printer_manager.test_connection(
         ip_address=ip_address,
+        printer_type=printer_type,
         serial_number=serial_number,
         access_code=access_code,
+        port=port,
+        api_key=api_key,
     )
     return result
 

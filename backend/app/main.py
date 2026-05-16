@@ -655,8 +655,23 @@ _last_status_broadcast: dict[int, str] = {}
 _nozzle_count_updated: set[int] = set()
 
 
-async def on_printer_status_change(printer_id: int, state: PrinterState):
-    """Handle printer status changes - broadcast via WebSocket."""
+async def on_printer_status_change(printer_id: int, state):
+    """Handle printer status changes - broadcast via WebSocket.
+
+    Dispatches based on state type: Bambu PrinterState gets full processing
+    (notifications, dedup, etc.); Moonraker/Elegoo states get a slim broadcast.
+    """
+    from backend.app.services.elegoo_centauri_client import ElegooState
+    from backend.app.services.moonraker_client import MoonrakerState
+    from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
+
+    if isinstance(state, ElegooState):
+        await ws_manager.send_printer_status(printer_id, _elegoo_state_to_dict(state, printer_id))
+        return
+    if isinstance(state, MoonrakerState):
+        await ws_manager.send_printer_status(printer_id, _moonraker_state_to_dict(state, printer_id))
+        return
+
     # Only broadcast if something meaningful changed (reduce WebSocket spam)
     # Include rounded temperatures to detect meaningful temp changes (within 1 degree)
     temps = state.temperatures or {}

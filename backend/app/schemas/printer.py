@@ -3,27 +3,50 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+_IP_PATTERN = r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$"
+
+
 class PrinterBase(BaseModel):
+    """Fields shared by all printer types."""
+
     name: str = Field(..., min_length=1, max_length=100)
-    serial_number: str = Field(..., min_length=1, max_length=50)
-    ip_address: str = Field(
-        ...,
-        max_length=253,
-        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
-    )
-    access_code: str = Field(..., min_length=1, max_length=20)
+    printer_type: str = Field(default="bambu", max_length=20)
+    ip_address: str = Field(..., max_length=253, pattern=_IP_PATTERN)
     model: str | None = None
-    location: str | None = None  # Group/location name
+    location: str | None = None
     auto_archive: bool = True
     external_camera_url: str | None = None
-    external_camera_type: str | None = None  # "mjpeg", "rtsp", "snapshot", "usb"
+    external_camera_type: str | None = None
     external_camera_enabled: bool = False
-    external_camera_snapshot_url: str | None = None  # Optional single-frame override; #1177
-    camera_rotation: int = 0  # 0, 90, 180, 270 degrees
+    external_camera_snapshot_url: str | None = None
+    camera_rotation: int = 0
 
 
-class PrinterCreate(PrinterBase):
-    pass
+class BambuPrinterCreate(PrinterBase):
+    """Create payload for Bambu Lab printers."""
+
+    printer_type: str = "bambu"
+    serial_number: str = Field(..., min_length=1, max_length=50)
+    access_code: str = Field(..., min_length=1, max_length=20)
+
+
+class MoonrakerPrinterCreate(PrinterBase):
+    """Create payload for Moonraker/Klipper printers (Elegoo Centauri, Snapmaker U1, etc.)."""
+
+    port: int = Field(default=7125, ge=1, le=65535)
+    api_key: str | None = Field(default=None, max_length=100)
+
+
+class ElegooCentauriCreate(MoonrakerPrinterCreate):
+    printer_type: str = "elegoo_centauri"
+
+
+class SnapmakerU1Create(MoonrakerPrinterCreate):
+    printer_type: str = "snapmaker_u1"
+
+
+# Backward-compatible alias — existing code that imports PrinterCreate still works
+PrinterCreate = BambuPrinterCreate
 
 
 class PlateDetectionROI(BaseModel):
@@ -36,13 +59,10 @@ class PlateDetectionROI(BaseModel):
 
 
 class PrinterUpdate(BaseModel):
+    """Fields that can be updated on any printer."""
+
     name: str | None = None
-    ip_address: str | None = Field(
-        default=None,
-        max_length=253,
-        pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
-    )
-    access_code: str | None = None
+    ip_address: str | None = Field(default=None, max_length=253, pattern=_IP_PATTERN)
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None
@@ -51,61 +71,95 @@ class PrinterUpdate(BaseModel):
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool | None = None
-    external_camera_snapshot_url: str | None = None  # #1177
-    camera_rotation: int | None = None  # 0, 90, 180, 270 degrees
+    external_camera_snapshot_url: str | None = None
+    camera_rotation: int | None = None
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
 
 
-class PrinterResponse(PrinterBase):
+class BambuPrinterUpdate(PrinterUpdate):
+    """Additional updatable fields specific to Bambu printers."""
+
+    access_code: str | None = None
+
+
+class MoonrakerPrinterUpdate(PrinterUpdate):
+    """Additional updatable fields specific to Moonraker printers."""
+
+    port: int | None = Field(default=None, ge=1, le=65535)
+    api_key: str | None = None
+
+
+class PrinterResponse(BaseModel):
+    """API response for a printer record. Vendor-specific config is nested."""
+
     id: int
+    printer_type: str
+    name: str
+    ip_address: str
+    model: str | None = None
+    location: str | None = None
     is_active: bool
-    nozzle_count: int = 1  # 1 or 2, auto-detected from MQTT
+    auto_archive: bool = True
     print_hours_offset: float = 0.0
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool = False
-    external_camera_snapshot_url: str | None = None  # #1177
-    camera_rotation: int = 0  # 0, 90, 180, 270 degrees
+    external_camera_snapshot_url: str | None = None
+    camera_rotation: int = 0
     plate_detection_enabled: bool = False
     plate_detection_roi: PlateDetectionROI | None = None
     created_at: datetime
     updated_at: datetime
+    # Bambu-specific config (None for non-Bambu printers)
+    serial_number: str | None = None
+    access_code: str | None = None
+    nozzle_count: int = 1
+    # Moonraker-specific config (None for non-Moonraker printers)
+    moonraker_port: int | None = None
+    moonraker_api_key: str | None = None
 
     class Config:
         from_attributes = True
 
     @classmethod
     def from_orm_with_roi(cls, printer) -> "PrinterResponse":
-        """Create response from ORM model, converting ROI fields to nested object."""
+        """Build response from ORM Printer + vendor config rows."""
+        bambu = printer.bambu_config
+        moonraker = printer.moonraker_config
         data = {
             "id": printer.id,
+            "printer_type": printer.printer_type,
             "name": printer.name,
-            "serial_number": printer.serial_number,
             "ip_address": printer.ip_address,
-            "access_code": printer.access_code,
             "model": printer.model,
             "location": printer.location,
+            "is_active": printer.is_active,
             "auto_archive": printer.auto_archive,
             "external_camera_url": printer.external_camera_url,
             "external_camera_type": printer.external_camera_type,
             "external_camera_enabled": printer.external_camera_enabled,
             "external_camera_snapshot_url": printer.external_camera_snapshot_url,
             "camera_rotation": printer.camera_rotation,
-            "is_active": printer.is_active,
-            "nozzle_count": printer.nozzle_count,
             "print_hours_offset": printer.print_hours_offset,
             "plate_detection_enabled": printer.plate_detection_enabled,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,
+            # Bambu config
+            "serial_number": bambu.serial_number if bambu else None,
+            "access_code": bambu.access_code if bambu else None,
+            "nozzle_count": bambu.nozzle_count if bambu else 1,
+            # Moonraker config
+            "moonraker_port": moonraker.port if moonraker else None,
+            "moonraker_api_key": moonraker.api_key if moonraker else None,
         }
-        # Build ROI object if any ROI field is set
         if any(
-            [
-                printer.plate_detection_roi_x is not None,
-                printer.plate_detection_roi_y is not None,
-                printer.plate_detection_roi_w is not None,
-                printer.plate_detection_roi_h is not None,
+            v is not None
+            for v in [
+                printer.plate_detection_roi_x,
+                printer.plate_detection_roi_y,
+                printer.plate_detection_roi_w,
+                printer.plate_detection_roi_h,
             ]
         ):
             data["plate_detection_roi"] = PlateDetectionROI(
@@ -224,6 +278,7 @@ class PrintOptionsResponse(BaseModel):
 
 
 class PrinterStatus(BaseModel):
+    printer_type: str = "bambu"
     id: int
     name: str
     connected: bool
@@ -306,3 +361,31 @@ class PrinterStatus(BaseModel):
     # Set for every active print regardless of plate count; the frontend decides
     # whether to render it based on current_archive_id's is_multi_plate flag.
     current_plate_id: int | None = None
+
+
+class MoonrakerPrinterStatus(BaseModel):
+    """Real-time status for non-Bambu printers (Moonraker/Klipper, Elegoo SDCP, etc.).
+
+    Discriminated from BambuPrinterStatus by ``printer_type``.
+    The frontend mounts the matching tile component based on this field.
+    """
+
+    printer_type: str  # "moonraker" | "elegoo_centauri" | "snapmaker_u1"
+    id: int
+    name: str
+    connected: bool
+    klippy_state: str = "disconnected"
+    state: str | None = None
+    current_print: str | None = None
+    progress: float | None = None
+    remaining_time: int | None = None
+    layer_num: int | None = None
+    total_layers: int | None = None
+    temperatures: dict | None = None
+    fan_speed: int | None = None
+    speed_factor: float = 1.0
+    cover_url: str | None = None
+    firmware_version: str | None = None
+    machine_name: str | None = None  # vendor-reported model name (e.g. "Centauri Carbon")
+    chamber_light: bool = False
+    awaiting_plate_clear: bool = False

@@ -191,6 +191,8 @@ async def init_db():
         print_batch,
         print_log,
         print_queue,
+        bambu_printer_config,
+        moonraker_printer_config,
         printer,
         project,
         project_bom,
@@ -2497,6 +2499,29 @@ async def run_migrations(conn):
             otp_n,
             llt_n,
         )
+
+    # Migration: Printer abstraction layer — add printer_type discriminator
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN printer_type VARCHAR(20) DEFAULT 'bambu' NOT NULL")
+    # Backfill NULL printer_type for rows inserted before the NOT NULL constraint was in place
+    await _safe_execute(conn, "UPDATE printers SET printer_type = 'bambu' WHERE printer_type IS NULL")
+
+    # Migration: Backfill bambu_printer_configs from legacy printers columns.
+    # create_all() already created the table; this INSERT is idempotent (ON CONFLICT DO NOTHING).
+    try:
+        async with conn.begin_nested():
+            await conn.execute(
+                text("""
+                INSERT INTO bambu_printer_configs (printer_id, serial_number, access_code, nozzle_count)
+                SELECT p.id, p.serial_number, p.access_code, p.nozzle_count
+                FROM printers p
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM bambu_printer_configs b WHERE b.printer_id = p.id
+                )
+                AND p.printer_type = 'bambu'
+                """)
+            )
+    except (OperationalError, ProgrammingError):
+        pass  # Already applied or columns don't exist yet on fresh installs
 
 
 async def seed_notification_templates():
