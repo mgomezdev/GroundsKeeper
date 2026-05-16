@@ -2858,19 +2858,11 @@ async def bed_jog(
 
     from backend.app.services.printer_manager import is_bed_slinger
 
-    gcode_distance = -distance if is_bed_slinger(printer.model) else distance
+    # Bed-slingers (A1/A1 Mini) move the toolhead on Z, so invert the sign
+    # to keep UI semantics consistent ("up" always means decrease nozzle-bed gap).
+    adjusted = -distance if is_bed_slinger(printer.model) else distance
 
-    lines = []
-    if force:
-        lines.append("M211 S0")
-    lines += ["G91", f"G1 Z{gcode_distance:.2f} F600", "G90"]
-    if force:
-        lines.append("M211 S1")
-
-    if not client.gcode_supported:
-        raise HTTPException(400, "Bed jog is not supported for this printer type")
-
-    if not client.send_gcode("\n".join(lines)):
+    if not client.jog_z(adjusted, force):
         raise HTTPException(500, "Failed to send bed-jog command")
 
     return {"success": True, "message": f"Bed jog {distance:+.1f} mm sent"}
@@ -2914,10 +2906,7 @@ async def home_axes(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    if not client.gcode_supported:
-        raise HTTPException(400, "Auto home is not supported for this printer type")
-
-    if not client.send_gcode("G28"):
+    if not client.home():
         raise HTTPException(500, "Failed to send home command")
 
     return {"success": True, "message": "Full auto-home sequence sent"}

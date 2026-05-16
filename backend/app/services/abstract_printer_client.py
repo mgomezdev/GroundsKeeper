@@ -73,6 +73,24 @@ class AbstractPrinterClient(ABC):
         """True if this client can accept raw G-code via send_gcode(). Default True."""
         return True
 
+    def home(self) -> bool:
+        """Home all axes. Default: G28 via send_gcode. Subclasses override if needed."""
+        return self.send_gcode("G28")
+
+    def jog_z(self, distance_mm: float, force: bool = False) -> bool:
+        """Jog the Z axis by distance_mm. Default: relative G1 via send_gcode.
+
+        force=True disables soft endstops (M211) for the move — Bambu-specific;
+        subclasses that use native protocols may ignore it.
+        """
+        lines = []
+        if force:
+            lines.append("M211 S0")
+        lines += ["G91", f"G1 Z{distance_mm:.2f} F600", "G90"]
+        if force:
+            lines.append("M211 S1")
+        return self.send_gcode("\n".join(lines))
+
     def set_chamber_light(self, on: bool) -> bool:
         """Turn the chamber/work light on or off. Subclasses override if supported."""
         return False

@@ -55,6 +55,8 @@ _CMD_START_PRINT = 128
 _CMD_SUSPEND_PRINT = 129
 _CMD_STOP_PRINT = 130
 _CMD_RESTORE_PRINT = 131
+_CMD_EDIT_AXIS_NUMBER = 401        # EDIT_PRINTER_AXIS_NUMBER: {"Axis": "Z", "Step": <mm>}
+_CMD_EDIT_AXIS_ZERO = 402          # EDIT_PRINTER_AXIS_ZERO:   {"Axis": "XYZ"}
 _CMD_GET_BLACKOUT = 134           # GET_BLACKOUT_STATUS
 _CMD_SEND_BLACKOUT = 135          # SEND_BLACKOUT_ACTION (reactive only — printer-initiated)
 _CMD_EDIT_VIDEO_STREAMING = 386   # EDIT_PRINTER_VIDEO_STREAMING: Enable=1 start, Enable=0 stop
@@ -384,6 +386,14 @@ class ElegooCentauriClient(AbstractPrinterClient):
     @property
     def gcode_supported(self) -> bool:
         return False
+
+    def home(self) -> bool:
+        # Cmd 402 EDIT_PRINTER_AXIS_ZERO: homes all axes (confirmed via ELEGOO SDK + OctoEverywhere)
+        return self._send(_CMD_EDIT_AXIS_ZERO, {"Axis": "XYZ"})
+
+    def jog_z(self, distance_mm: float, force: bool = False) -> bool:
+        # Cmd 401 EDIT_PRINTER_AXIS_NUMBER: step Z by distance_mm (payload confirmed via ELEGOO SDK)
+        return self._send(_CMD_EDIT_AXIS_NUMBER, {"Axis": "Z", "Step": distance_mm})
 
     def send_gcode(self, gcode: str) -> bool:
         logger.warning(
