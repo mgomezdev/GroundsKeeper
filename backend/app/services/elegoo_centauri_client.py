@@ -474,7 +474,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
         self._pending_video_url = None
         self._send(_CMD_EDIT_VIDEO_STREAMING, {"Enable": 1})
         self._video_url_event.wait(timeout=timeout)
-        return self._pending_video_url or f"http://{self.ip_address}:3031/video"
+        url = self._pending_video_url or f"http://{self.ip_address}:3031/video"
+        return f"{url}?timestamp={int(time.time())}"
 
     def ping_video_stream(self) -> None:
         """Re-send the stream activation command to reset the printer's 60-second inactivity timer."""
