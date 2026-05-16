@@ -2867,6 +2867,9 @@ async def bed_jog(
     if force:
         lines.append("M211 S1")
 
+    if not client.gcode_supported:
+        raise HTTPException(400, "Bed jog is not supported for this printer type")
+
     if not client.send_gcode("\n".join(lines)):
         raise HTTPException(500, "Failed to send bed-jog command")
 
@@ -2910,6 +2913,9 @@ async def home_axes(
     client = printer_manager.get_client(printer_id)
     if not client:
         raise HTTPException(400, "Printer not connected")
+
+    if not client.gcode_supported:
+        raise HTTPException(400, "Auto home is not supported for this printer type")
 
     if not client.send_gcode("G28"):
         raise HTTPException(500, "Failed to send home command")

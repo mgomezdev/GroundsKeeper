@@ -68,6 +68,11 @@ class AbstractPrinterClient(ABC):
     def request_status_update(self) -> bool:
         """Ask the printer to push a full status refresh immediately."""
 
+    @property
+    def gcode_supported(self) -> bool:
+        """True if this client can accept raw G-code via send_gcode(). Default True."""
+        return True
+
     def set_chamber_light(self, on: bool) -> bool:
         """Turn the chamber/work light on or off. Subclasses override if supported."""
         return False

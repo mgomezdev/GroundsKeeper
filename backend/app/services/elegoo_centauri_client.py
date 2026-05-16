@@ -381,6 +381,10 @@ class ElegooCentauriClient(AbstractPrinterClient):
     def resume_print(self) -> bool:
         return self._send(_CMD_RESTORE_PRINT)
 
+    @property
+    def gcode_supported(self) -> bool:
+        return False
+
     def send_gcode(self, gcode: str) -> bool:
         logger.warning(
             "[%s] send_gcode not supported on Elegoo Centauri (no raw GCode channel)",
