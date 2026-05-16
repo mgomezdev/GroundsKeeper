@@ -27,9 +27,15 @@ Status.CurrentStatus[] codes:
   8: print complete
 
 Status.PrintInfo.Status sub-state codes:
-  0: idle
-  1: printing
-  6: paused
+  0:  idle
+  1:  warming up / cancelling
+  5:  pausing
+  6:  paused
+  8:  cancelled
+  9:  complete
+  13: printing
+  14: cancelled (alternate)
+  20: bed leveling
 """
 
 from __future__ import annotations
@@ -67,7 +73,14 @@ _CS_PRINTING = 1
 _CS_COMPLETE = 8
 
 # PrintInfo.Status sub-state codes
+_PS_WARMING_UP = 1
+_PS_PAUSING = 5
 _PS_PAUSED = 6
+_PS_CANCELLED = 8
+_PS_COMPLETE = 9
+_PS_PRINTING = 13
+_PS_CANCELLED_ALT = 14
+_PS_LEVELING = 20
 
 SDCP_PORT = 3030
 _RECONNECT_DELAY = 5.0
@@ -79,7 +92,7 @@ class ElegooState:
 
     connected: bool = False
     current_status: list[int] = field(default_factory=list)
-    # Mapped print state: "standby" | "printing" | "paused" | "complete"
+    # Mapped print state: "standby" | "warming_up" | "leveling" | "printing" | "pausing" | "paused" | "cancelled" | "complete"
     print_state: str = "standby"
     filename: str | None = None
     task_id: str | None = None
@@ -181,7 +194,18 @@ class ElegooCentauriClient(AbstractPrinterClient):
         ps = print_info.get("Status", 0)
 
         if _CS_PRINTING in cs:
-            s.print_state = "paused" if ps == _PS_PAUSED else "printing"
+            if ps == _PS_PAUSED:
+                s.print_state = "paused"
+            elif ps == _PS_PAUSING:
+                s.print_state = "pausing"
+            elif ps == _PS_WARMING_UP:
+                s.print_state = "warming_up"
+            elif ps == _PS_LEVELING:
+                s.print_state = "leveling"
+            elif ps in (_PS_CANCELLED, _PS_CANCELLED_ALT):
+                s.print_state = "cancelled"
+            else:
+                s.print_state = "printing"
         elif _CS_COMPLETE in cs:
             s.print_state = "complete"
         else:
@@ -424,7 +448,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     def set_chamber_light(self, on: bool) -> bool:
         # EDIT_PRINTER_STATUS_DATA (403): send LightStatus with desired SecondLight value
-        success = self._send(_CMD_EDIT_STATUS_DATA, {"LightStatus": {"SecondLight": on}})
+        success = self._send(_CMD_EDIT_STATUS_DATA, {"LightStatus": {"SecondLight": on, "RgbLight": [0, 0, 0]}})
         if success:
             with self._lock:
                 self.state.chamber_light = on
