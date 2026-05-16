@@ -152,32 +152,46 @@ class ElegooCentauriClient(AbstractPrinterClient):
         self._lock = threading.Lock()
         self._video_url_event = threading.Event()
         self._pending_video_url: str | None = None
+        self._pending_acks: dict[str, threading.Event] = {}
+        self._ack_results: dict[str, int] = {}
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                      #
     # ------------------------------------------------------------------ #
 
-    def _build_cmd(self, cmd: int, data: dict | None = None) -> str:
+    def _build_cmd(self, cmd: int, data: dict | None = None, request_id: str | None = None) -> str:
         return json.dumps({
             "Id": "",
             "Data": {
                 "Cmd": cmd,
                 "Data": data or {},
-                "RequestID": uuid.uuid4().hex,
+                "RequestID": request_id or uuid.uuid4().hex,
                 "MainboardID": self._mainboard_id or "",
                 "TimeStamp": int(time.time()),
                 "From": 1,
             },
         })
 
-    def _send(self, cmd: int, data: dict | None = None) -> bool:
+    def _send(self, cmd: int, data: dict | None = None, wait_ack: bool = False, ack_timeout: float = 10.0) -> bool:
         ws = self._ws
         if ws is None:
             return False
+        request_id = uuid.uuid4().hex
+        event = threading.Event()
+        if wait_ack:
+            self._pending_acks[request_id] = event
         try:
-            ws.send(self._build_cmd(cmd, data))
-            return True
+            ws.send(self._build_cmd(cmd, data, request_id))
+            if not wait_ack:
+                return True
+            if not event.wait(timeout=ack_timeout):
+                self._pending_acks.pop(request_id, None)
+                self._ack_results.pop(request_id, None)
+                logger.debug("[%s] SDCP ack timeout for cmd=%d", self.ip_address, cmd)
+                return False
+            return self._ack_results.pop(request_id, -1) == 0
         except Exception as exc:
+            self._pending_acks.pop(request_id, None)
             logger.debug("[%s] SDCP send cmd=%d failed: %s", self.ip_address, cmd, exc)
             return False
 
@@ -254,13 +268,22 @@ class ElegooCentauriClient(AbstractPrinterClient):
         return s
 
     def _parse_response_msg(self, msg: dict) -> None:
-        # Response envelope: {"Data": {"Cmd": N, "Data": {"Ack": N, ...}, ...}, ...}
+        # Response envelope: {"Data": {"Cmd": N, "Data": {"Ack": N, ...}, "RequestID": "...", ...}, ...}
         outer = msg.get("Data", {})
+        inner = outer.get("Data", {})
+        request_id = outer.get("RequestID", "")
+        ack = inner.get("Ack", -1)
+
+        # Resolve any waiting caller
+        event = self._pending_acks.pop(request_id, None)
+        if event is not None:
+            self._ack_results[request_id] = ack
+            event.set()
+
         if outer.get("Cmd") != _CMD_EDIT_VIDEO_STREAMING:
             return
-        inner = outer.get("Data", {})
         logger.debug("[%s] SDCP video stream response: %s", self.ip_address, inner)
-        if inner.get("Ack") == 0:
+        if ack == 0:
             url = inner.get("VideoUrl") or f"http://{self.ip_address}:3031/video"
             if not url.startswith("http"):
                 url = f"http://{url}"
@@ -411,16 +434,16 @@ class ElegooCentauriClient(AbstractPrinterClient):
         return self.state.connected
 
     def start_print(self, file_name: str) -> bool:
-        return self._send(_CMD_START_PRINT, {"Filename": file_name})
+        return self._send(_CMD_START_PRINT, {"Filename": file_name}, wait_ack=True)
 
     def stop_print(self) -> bool:
-        return self._send(_CMD_STOP_PRINT)
+        return self._send(_CMD_STOP_PRINT, wait_ack=True)
 
     def pause_print(self) -> bool:
-        return self._send(_CMD_SUSPEND_PRINT)
+        return self._send(_CMD_SUSPEND_PRINT, wait_ack=True)
 
     def resume_print(self) -> bool:
-        return self._send(_CMD_RESTORE_PRINT)
+        return self._send(_CMD_RESTORE_PRINT, wait_ack=True)
 
     @property
     def gcode_supported(self) -> bool:
@@ -428,11 +451,11 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     def home(self) -> bool:
         # Cmd 402 EDIT_PRINTER_AXIS_ZERO: homes all axes (confirmed via ELEGOO SDK + OctoEverywhere)
-        return self._send(_CMD_EDIT_AXIS_ZERO, {"Axis": "XYZ"})
+        return self._send(_CMD_EDIT_AXIS_ZERO, {"Axis": "XYZ"}, wait_ack=True)
 
     def jog_z(self, distance_mm: float, force: bool = False) -> bool:
         # Cmd 401 EDIT_PRINTER_AXIS_NUMBER: step Z by distance_mm (payload confirmed via ELEGOO SDK)
-        return self._send(_CMD_EDIT_AXIS_NUMBER, {"Axis": "Z", "Step": distance_mm})
+        return self._send(_CMD_EDIT_AXIS_NUMBER, {"Axis": "Z", "Step": distance_mm}, wait_ack=True)
 
     def send_gcode(self, gcode: str) -> bool:
         logger.warning(
@@ -463,7 +486,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     def set_chamber_light(self, on: bool) -> bool:
         # EDIT_PRINTER_STATUS_DATA (403): send LightStatus with desired SecondLight value
-        success = self._send(_CMD_EDIT_STATUS_DATA, {"LightStatus": {"SecondLight": on, "RgbLight": [0, 0, 0]}})
+        success = self._send(_CMD_EDIT_STATUS_DATA, {"LightStatus": {"SecondLight": on, "RgbLight": [0, 0, 0]}}, wait_ack=True)
         if success:
             with self._lock:
                 self.state.chamber_light = on
