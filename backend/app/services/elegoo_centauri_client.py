@@ -55,9 +55,10 @@ _CMD_START_PRINT = 128
 _CMD_SUSPEND_PRINT = 129
 _CMD_STOP_PRINT = 130
 _CMD_RESTORE_PRINT = 131
-_CMD_GET_BLACKOUT = 134       # GET_BLACKOUT_STATUS
-_CMD_SEND_BLACKOUT = 135      # SEND_BLACKOUT_ACTION (reactive only — printer-initiated)
-_CMD_EDIT_STATUS_DATA = 403   # EDIT_PRINTER_STATUS_DATA — proactive light/fan control
+_CMD_GET_BLACKOUT = 134           # GET_BLACKOUT_STATUS
+_CMD_SEND_BLACKOUT = 135          # SEND_BLACKOUT_ACTION (reactive only — printer-initiated)
+_CMD_EDIT_VIDEO_STREAMING = 386   # EDIT_PRINTER_VIDEO_STREAMING: Enable=1 start, Enable=0 stop
+_CMD_EDIT_STATUS_DATA = 403       # EDIT_PRINTER_STATUS_DATA — proactive light/fan control
 
 # CurrentStatus array codes
 _CS_PRINTING = 1
@@ -90,6 +91,7 @@ class ElegooState:
     fan_model: int = 0            # part-cooling fan 0-100
     fan_aux: int = 0              # auxiliary fan 0-100
     chamber_light: bool = False   # LightStatus.SecondLight
+    video_url: str | None = None  # populated on first successful Cmd 386 response
     firmware_version: str | None = None
     machine_name: str | None = None
     mainboard_id: str | None = None
@@ -133,6 +135,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
         self._prev_print_state: str = "standby"
         self._prev_layer: int | None = None
         self._lock = threading.Lock()
+        self._video_url_event = threading.Event()
+        self._pending_video_url: str | None = None
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                      #
@@ -219,6 +223,22 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
         return s
 
+    def _parse_response_msg(self, msg: dict) -> None:
+        # Response envelope: {"Data": {"Cmd": N, "Data": {"Ack": N, ...}, ...}, ...}
+        outer = msg.get("Data", {})
+        if outer.get("Cmd") != _CMD_EDIT_VIDEO_STREAMING:
+            return
+        inner = outer.get("Data", {})
+        logger.debug("[%s] SDCP video stream response: %s", self.ip_address, inner)
+        if inner.get("Ack") == 0:
+            url = inner.get("VideoUrl") or f"http://{self.ip_address}:3031/video"
+            if not url.startswith("http"):
+                url = f"http://{url}"
+            self._pending_video_url = url
+            with self._lock:
+                self.state.video_url = url
+            self._video_url_event.set()
+
     def _parse_attr_msg(self, msg: dict) -> None:
         attrs = msg.get("Attributes", {})
         logger.debug("[%s] SDCP attributes keys: %s", self.ip_address, list(attrs.keys()))
@@ -277,6 +297,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
         elif "sdcp/attributes" in topic:
             self._parse_attr_msg(msg)
+
+        elif "sdcp/response" in topic:
+            self._parse_response_msg(msg)
 
     def _on_ws_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
         logger.debug("[%s] SDCP WebSocket error: %s", self.ip_address, error)
@@ -364,6 +387,26 @@ class ElegooCentauriClient(AbstractPrinterClient):
             self.ip_address,
         )
         return False
+
+    def start_video_stream(self, timeout: float = 5.0) -> str:
+        """Activate the MJPEG stream (Cmd 386) and return the stream URL.
+
+        Falls back to the conventional port-3031 URL if the printer doesn't
+        return a VideoUrl in its response within *timeout* seconds.
+        """
+        self._video_url_event.clear()
+        self._pending_video_url = None
+        self._send(_CMD_EDIT_VIDEO_STREAMING, {"Enable": 1})
+        self._video_url_event.wait(timeout=timeout)
+        return self._pending_video_url or f"http://{self.ip_address}:3031/video"
+
+    def ping_video_stream(self) -> None:
+        """Re-send the stream activation command to reset the printer's 60-second inactivity timer."""
+        self._send(_CMD_EDIT_VIDEO_STREAMING, {"Enable": 1})
+
+    def stop_video_stream(self) -> None:
+        """Deactivate the MJPEG stream (Cmd 386 with Enable=0)."""
+        self._send(_CMD_EDIT_VIDEO_STREAMING, {"Enable": 0})
 
     def set_chamber_light(self, on: bool) -> bool:
         # EDIT_PRINTER_STATUS_DATA (403): send LightStatus with desired SecondLight value
