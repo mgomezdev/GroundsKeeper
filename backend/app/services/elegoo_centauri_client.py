@@ -67,6 +67,8 @@ _CMD_GET_BLACKOUT = 134           # GET_BLACKOUT_STATUS
 _CMD_SEND_BLACKOUT = 135          # SEND_BLACKOUT_ACTION (reactive only — printer-initiated)
 _CMD_EDIT_VIDEO_STREAMING = 386   # EDIT_PRINTER_VIDEO_STREAMING: Enable=1 start, Enable=0 stop
 _CMD_EDIT_STATUS_DATA = 403       # EDIT_PRINTER_STATUS_DATA — proactive light/fan control
+_CMD_GET_FILE_LIST = 258          # GET_FILE_LIST: {"Url": "/local/"}
+_CMD_DELETE_FILE = 259            # DELETE_FILE: {"FileList": [...], "FolderList": [...]}
 
 # CurrentStatus array codes
 _CS_PRINTING = 1
@@ -154,6 +156,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
         self._pending_video_url: str | None = None
         self._pending_acks: dict[str, threading.Event] = {}
         self._ack_results: dict[str, int] = {}
+        self._response_data: dict[str, dict] = {}
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                      #
@@ -187,13 +190,39 @@ class ElegooCentauriClient(AbstractPrinterClient):
             if not event.wait(timeout=ack_timeout):
                 self._pending_acks.pop(request_id, None)
                 self._ack_results.pop(request_id, None)
+                self._response_data.pop(request_id, None)
                 logger.debug("[%s] SDCP ack timeout for cmd=%d", self.ip_address, cmd)
                 return False
+            self._response_data.pop(request_id, None)
             return self._ack_results.pop(request_id, -1) == 0
         except Exception as exc:
             self._pending_acks.pop(request_id, None)
             logger.debug("[%s] SDCP send cmd=%d failed: %s", self.ip_address, cmd, exc)
             return False
+
+    def _send_with_response(self, cmd: int, data: dict | None = None, timeout: float = 10.0) -> tuple[bool, dict]:
+        """Send a command and return (success, response_data_dict)."""
+        ws = self._ws
+        if ws is None:
+            return False, {}
+        request_id = uuid.uuid4().hex
+        event = threading.Event()
+        self._pending_acks[request_id] = event
+        try:
+            ws.send(self._build_cmd(cmd, data, request_id))
+            if not event.wait(timeout=timeout):
+                self._pending_acks.pop(request_id, None)
+                self._ack_results.pop(request_id, None)
+                self._response_data.pop(request_id, None)
+                logger.debug("[%s] SDCP response timeout for cmd=%d", self.ip_address, cmd)
+                return False, {}
+            ack = self._ack_results.pop(request_id, -1)
+            resp = self._response_data.pop(request_id, {})
+            return ack == 0, resp
+        except Exception as exc:
+            self._pending_acks.pop(request_id, None)
+            logger.debug("[%s] SDCP send cmd=%d failed: %s", self.ip_address, cmd, exc)
+            return False, {}
 
     def _run_sdcp_keepalive(self) -> None:
         while not self._stop_event.wait(50):
@@ -278,6 +307,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
         event = self._pending_acks.pop(request_id, None)
         if event is not None:
             self._ack_results[request_id] = ack
+            self._response_data[request_id] = inner
             event.set()
 
         if outer.get("Cmd") != _CMD_EDIT_VIDEO_STREAMING:
@@ -492,6 +522,55 @@ class ElegooCentauriClient(AbstractPrinterClient):
             with self._lock:
                 self.state.chamber_light = on
         return success
+
+    # ------------------------------------------------------------------ #
+    # File management                                                       #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def file_upload_supported(self) -> bool:
+        return True
+
+    def upload_file(self, file_data: bytes, filename: str) -> bool:
+        """Upload a file to /local/<filename> via HTTP multipart POST."""
+        import hashlib
+
+        import httpx
+
+        url = f"http://{self.ip_address}:{self.port}/uploadFile/upload"
+        md5 = hashlib.md5(file_data).hexdigest()  # nosec B324
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                resp = client.post(
+                    url,
+                    data={
+                        "TotalSize": str(len(file_data)),
+                        "Uuid": uuid.uuid4().hex,
+                        "Offset": "0",
+                        "Check": "1",
+                        "S-File-MD5": md5,
+                    },
+                    files={"File": (filename, file_data, "application/octet-stream")},
+                )
+            result = resp.json()
+            ok = result.get("success") is True or result.get("code") == "000000"
+            if not ok:
+                logger.error("[%s] Upload rejected: %s", self.ip_address, result)
+            return ok
+        except Exception as exc:
+            logger.error("[%s] File upload failed: %s", self.ip_address, exc)
+            return False
+
+    def list_files(self, directory: str = "/local/") -> list[dict]:
+        """Return file list for *directory* via SDCP Cmd 258."""
+        ok, data = self._send_with_response(_CMD_GET_FILE_LIST, {"Url": directory})
+        if not ok:
+            return []
+        return data.get("FileList", [])
+
+    def delete_file(self, remote_path: str) -> bool:
+        """Delete a single file by its full path via SDCP Cmd 259."""
+        return self._send(_CMD_DELETE_FILE, {"FileList": [remote_path], "FolderList": []}, wait_ack=True)
 
     def request_status_update(self) -> bool:
         return self._send(_CMD_GET_STATUS)
