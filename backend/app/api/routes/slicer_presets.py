@@ -207,90 +207,68 @@ def _first_scalar(value: object) -> str | None:
 
 
 async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPreset]]:
-    """Standard slicer-bundled profiles merged from all configured sidecars.
+    """Standard slicer-bundled profiles from the preferred sidecar.
 
-    Queries every sidecar that has a URL configured (both BambuStudio and
-    OrcaSlicer if both are set up) and merges the results so that non-Bambu
-    profiles bundled in OrcaSlicer (Elegoo, Snapmaker, etc.) appear in the
-    Standard tier even when BambuStudio is the preferred slicer. The
-    preferred slicer's profiles take precedence on name collisions.
+    Queries the user's configured preferred sidecar (OrcaSlicer or BambuStudio)
+    and returns its bundled profiles as the Standard tier. Non-Bambu profiles
+    (Elegoo, Snapmaker, etc.) appear naturally when OrcaSlicer is the preferred
+    slicer, because OrcaSlicer bundles them. Setting ``preferred_slicer`` to
+    ``orcaslicer`` is the correct way to expose those profiles — routing them
+    through a secondary sidecar would cause slice dispatch to fail, since the
+    profile stub is always sent to the preferred slicer for resolution.
     """
     global _bundled_cache
     now = time.monotonic()
     if _bundled_cache and now - _bundled_cache[0] < _BUNDLED_TTL_S:
         return _bundled_cache[1]
 
-    preferred_url, secondary_url = await _resolve_all_slicer_urls(db)
-    if not preferred_url and not secondary_url:
+    api_url = await _resolve_slicer_api_url(db)
+    if not api_url:
         return _empty_slots()
 
-    async def _fetch_one(api_url: str) -> dict[str, list]:
-        try:
-            async with SlicerApiService(base_url=api_url) as svc:
-                return await svc.list_bundled_profiles()
-        except SlicerApiError as e:
-            logger.info("Bundled preset fetch from sidecar at %s failed: %s", api_url, e)
-        except Exception as e:  # noqa: BLE001 — never break the modal on sidecar issues
-            logger.warning("Bundled preset fetch unexpected error at %s: %s", api_url, e)
-        return {}
-
-    # Fetch preferred sidecar first; secondary fills in names not already seen.
-    preferred_raw = await _fetch_one(preferred_url) if preferred_url else {}
-    secondary_raw = await _fetch_one(secondary_url) if secondary_url else {}
+    try:
+        async with SlicerApiService(base_url=api_url) as svc:
+            raw = await svc.list_bundled_profiles()
+    except SlicerApiError as e:
+        logger.info("Bundled preset fetch failed: %s", e)
+        return _empty_slots()
+    except Exception as e:  # noqa: BLE001 — never break the modal on sidecar issues
+        logger.warning("Bundled preset fetch unexpected error: %s", e)
+        return _empty_slots()
 
     slots = _empty_slots()
     for slot in ("printer", "process", "filament"):
-        seen: set[str] = set()
-        for raw in (preferred_raw, secondary_raw):
-            for entry in raw.get(slot, []) or []:
-                name = entry.get("name")
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                extra: dict[str, str | None] = {}
-                if slot == "filament":
-                    extra["filament_type"] = entry.get("filament_type")
-                    extra["filament_colour"] = entry.get("filament_colour")
-                slots[slot].append(UnifiedPreset(id=name, name=name, source="standard", **extra))
+        for entry in raw.get(slot, []) or []:
+            name = entry.get("name")
+            if not name:
+                continue
+            extra: dict[str, str | None] = {}
+            if slot == "filament":
+                extra["filament_type"] = entry.get("filament_type")
+                extra["filament_colour"] = entry.get("filament_colour")
+            slots[slot].append(UnifiedPreset(id=name, name=name, source="standard", **extra))
 
     _bundled_cache = (now, slots)
     return slots
 
 
 async def _resolve_slicer_api_url(db: AsyncSession) -> str | None:
-    """Pick the preferred sidecar URL for slice dispatch.
-
-    Mirrors the slice route's resolution at ``library.py:_run_slicer_with_fallback``.
-    """
-    preferred_url, _ = await _resolve_all_slicer_urls(db)
-    return preferred_url
-
-
-async def _resolve_all_slicer_urls(db: AsyncSession) -> tuple[str | None, str | None]:
-    """Return (preferred_url, secondary_url) for all configured sidecars.
-
-    The preferred sidecar is the one the user has set via ``preferred_slicer``.
-    The secondary is the other sidecar if it has a URL configured — used by
-    ``_fetch_bundled_presets`` to surface non-Bambu profiles (e.g. Elegoo,
-    Snapmaker) that OrcaSlicer bundles even when BambuStudio is preferred.
-    Either or both may be None when not configured.
-    """
+    """Pick the preferred sidecar URL for slice dispatch and bundled-profile listing."""
     from backend.app.api.routes.settings import get_setting
 
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
 
-    bs_configured = await get_setting(db, "bambu_studio_api_url")
-    bs_url = (bs_configured or app_settings.bambu_studio_api_url or "").strip() or None
-
-    orca_configured = await get_setting(db, "orcaslicer_api_url")
-    orca_url = (orca_configured or app_settings.slicer_api_url or "").strip() or None
-
     if preferred == "orcaslicer":
-        return orca_url, bs_url
-    if preferred == "bambu_studio":
-        return bs_url, orca_url
-    logger.warning("Unknown preferred_slicer setting: %r — bundled tier disabled", preferred)
-    return None, None
+        configured = await get_setting(db, "orcaslicer_api_url")
+        url = (configured or app_settings.slicer_api_url or "").strip()
+    elif preferred == "bambu_studio":
+        configured = await get_setting(db, "bambu_studio_api_url")
+        url = (configured or app_settings.bambu_studio_api_url or "").strip()
+    else:
+        logger.warning("Unknown preferred_slicer setting: %r — sidecar disabled", preferred)
+        return None
+
+    return url or None
 
 
 def _dedupe_by_name(
