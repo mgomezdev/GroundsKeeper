@@ -22,7 +22,11 @@ from backend.app.models.orca_base_cache import OrcaBaseProfile
 
 logger = logging.getLogger(__name__)
 
-ORCA_BASE_URL = "https://raw.githubusercontent.com/SoftFever/OrcaSlicer/main/resources/profiles/BBL"
+_ORCA_PROFILES_ROOT = "https://raw.githubusercontent.com/SoftFever/OrcaSlicer/main/resources/profiles"
+# Vendor subdirectories to probe when looking up a base profile by name.
+# BBL (Bambu Lab) is tried first as the most common source; others follow in
+# rough prevalence order. New vendors can be added here without other changes.
+_ORCA_VENDOR_DIRS = ["BBL", "Elegoo", "Snapmaker", "Creality", "Prusa", "AnkerMake", "Bambu", "Flsun", "Qidi"]
 CACHE_TTL_DAYS = 7
 MAX_INHERITANCE_DEPTH = 10
 
@@ -64,13 +68,16 @@ async def fetch_and_cache_base_profile(name: str, profile_type: str, db: AsyncSe
     }
     subdir = type_dirs.get(profile_type, "filament")
 
-    # Try fetching from GitHub
-    urls_to_try = [
-        f"{ORCA_BASE_URL}/{subdir}/{name}.json",
-    ]
-    # Also try filament dir as fallback for any type
-    if subdir != "filament":
-        urls_to_try.append(f"{ORCA_BASE_URL}/filament/{name}.json")
+    # Build candidate URLs: for each vendor directory, try the correct subdir
+    # first then filament as a cross-type fallback (some filaments live in the
+    # machine dir in older profile sets). BBL is checked first as the most
+    # common source; non-Bambu vendors (Elegoo, Snapmaker, etc.) follow so
+    # that inherited Elegoo base profiles resolve without manual import.
+    urls_to_try: list[str] = []
+    for vendor in _ORCA_VENDOR_DIRS:
+        urls_to_try.append(f"{_ORCA_PROFILES_ROOT}/{vendor}/{subdir}/{name}.json")
+        if subdir != "filament":
+            urls_to_try.append(f"{_ORCA_PROFILES_ROOT}/{vendor}/filament/{name}.json")
 
     data = None
     async with httpx.AsyncClient(timeout=15.0) as client:

@@ -772,7 +772,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 source: sourcePrinterModel,
                 target: printerProfileName,
                 defaultValue:
-                  'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in Bambu Studio, change the printer, and re-export.',
+                  'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in OrcaSlicer or BambuStudio, switch to the correct printer, and re-export.',
               })}
             </div>
           )}

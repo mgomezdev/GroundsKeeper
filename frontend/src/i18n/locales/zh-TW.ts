@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   // Navigation
   nav: {
     printers: '印表機',
@@ -3379,7 +3379,7 @@ export default {
     previewToast: 'Analyzing {{name}} — {{elapsed}}',
     previewWithProgress: 'Analyzing {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     notUsedByPlate: '— not used by this plate',
-    printerMismatch: 'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in Bambu Studio, change the printer, and re-export.',
+    printerMismatch: 'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in OrcaSlicer or BambuStudio, switch to the correct printer, and re-export.',
     noPresetsForSlot: 'No presets available',
     presetsLoadFailed: 'Failed to load presets. Open Settings → Profiles to import them first.',
     allPresetsRequired: 'All presets must be selected',

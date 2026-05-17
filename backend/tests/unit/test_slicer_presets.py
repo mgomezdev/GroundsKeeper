@@ -294,7 +294,7 @@ class TestFetchBundledPresets:
     @pytest.mark.asyncio
     async def test_no_sidecar_url_returns_empty(self):
         sp._bundled_cache = None
-        with patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value=None)):
+        with patch.object(sp, "_resolve_all_slicer_urls", AsyncMock(return_value=(None, None))):
             slots = await sp._fetch_bundled_presets(MagicMock())
         assert slots == {"printer": [], "process": [], "filament": []}
         # No URL means no useful cache result either — second call should
@@ -309,7 +309,7 @@ class TestFetchBundledPresets:
         svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
         svc_mock.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://nope")),
+            patch.object(sp, "_resolve_all_slicer_urls", AsyncMock(return_value=("http://nope", None))),
             patch.object(sp, "SlicerApiService", return_value=svc_mock),
         ):
             slots = await sp._fetch_bundled_presets(MagicMock())
@@ -329,7 +329,7 @@ class TestFetchBundledPresets:
         svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
         svc_mock.__aexit__ = AsyncMock(return_value=False)
         with (
-            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "_resolve_all_slicer_urls", AsyncMock(return_value=("http://ok", None))),
             patch.object(sp, "SlicerApiService", return_value=svc_mock),
         ):
             slots = await sp._fetch_bundled_presets(MagicMock())
@@ -338,6 +338,51 @@ class TestFetchBundledPresets:
         # Bundled presets are addressed by name (the slicer's inheritance
         # walker resolves them by name), so id == name.
         assert slots["printer"][0].id == "Bambu X1C 0.4"
+
+    @pytest.mark.asyncio
+    async def test_secondary_sidecar_fills_non_bambu_profiles(self):
+        """When a secondary sidecar (e.g. OrcaSlicer) is configured alongside
+        the preferred one, its profiles are merged into the Standard tier so
+        non-Bambu profiles (Elegoo, Snapmaker, etc.) appear without needing
+        a local import or a Bambu Cloud account."""
+        sp._bundled_cache = None
+        bambu_svc = MagicMock()
+        bambu_svc.list_bundled_profiles = AsyncMock(
+            return_value={"printer": [{"name": "Bambu X1C 0.4"}], "process": [], "filament": []}
+        )
+        bambu_svc.__aenter__ = AsyncMock(return_value=bambu_svc)
+        bambu_svc.__aexit__ = AsyncMock(return_value=False)
+        orca_svc = MagicMock()
+        orca_svc.list_bundled_profiles = AsyncMock(
+            return_value={
+                "printer": [
+                    {"name": "Bambu X1C 0.4"},            # duplicate — should be dropped
+                    {"name": "Elegoo Centauri Carbon 0.4"},
+                ],
+                "process": [],
+                "filament": [],
+            }
+        )
+        orca_svc.__aenter__ = AsyncMock(return_value=orca_svc)
+        orca_svc.__aexit__ = AsyncMock(return_value=False)
+
+        call_count = 0
+
+        def _make_svc(base_url: str):
+            nonlocal call_count
+            call_count += 1
+            return bambu_svc if call_count == 1 else orca_svc
+
+        with (
+            patch.object(sp, "_resolve_all_slicer_urls", AsyncMock(return_value=("http://bambu", "http://orca"))),
+            patch.object(sp, "SlicerApiService", side_effect=_make_svc),
+        ):
+            slots = await sp._fetch_bundled_presets(MagicMock())
+
+        names = [p.name for p in slots["printer"]]
+        assert "Bambu X1C 0.4" in names
+        assert "Elegoo Centauri Carbon 0.4" in names
+        assert names.count("Bambu X1C 0.4") == 1  # deduped
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_sidecar(self):
