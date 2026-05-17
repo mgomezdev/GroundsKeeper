@@ -181,6 +181,10 @@ class ElegooCentauriClient(AbstractPrinterClient):
             logger.debug("[%s] SDCP send cmd=%d failed: %s", self.ip_address, cmd, exc)
             return False
 
+    def _run_sdcp_keepalive(self) -> None:
+        while not self._stop_event.wait(50):
+            self._send(_CMD_GET_STATUS)
+
     def _parse_status_msg(self, msg: dict) -> ElegooState:
         s = ElegooState()
         s.raw = msg
@@ -265,6 +269,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 self.state.video_url = url
             self._video_url_event.set()
 
+    def _parse_error_msg(self, msg: dict) -> None:
+        logger.warning("[%s] SDCP error: %s", self.ip_address, msg)
+
     def _parse_attr_msg(self, msg: dict) -> None:
         attrs = msg.get("Attributes", {})
         logger.debug("[%s] SDCP attributes keys: %s", self.ip_address, list(attrs.keys()))
@@ -327,6 +334,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
         elif "sdcp/response" in topic:
             self._parse_response_msg(msg)
 
+        elif "sdcp/error" in topic:
+            self._parse_error_msg(msg)
+
     def _on_ws_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
         logger.debug("[%s] SDCP WebSocket error: %s", self.ip_address, error)
 
@@ -373,6 +383,11 @@ class ElegooCentauriClient(AbstractPrinterClient):
             name=f"elegoo-{self.ip_address}",
         )
         self._ws_thread.start()
+        threading.Thread(
+            target=self._run_sdcp_keepalive,
+            daemon=True,
+            name=f"elegoo-ka-{self.ip_address}",
+        ).start()
         logger.info(
             "[%s] ElegooCentauriClient started (SDCP ws port %d)",
             self.ip_address,
