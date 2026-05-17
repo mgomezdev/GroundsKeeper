@@ -3,7 +3,7 @@ import logging
 import re
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1114,6 +1114,23 @@ async def list_printer_files(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
+    if printer.printer_type == "elegoo_centauri":
+        client = printer_manager.get_client(printer_id)
+        if not client:
+            raise HTTPException(400, "Printer not connected")
+        directory = path if path.endswith("/") else path + "/"
+        raw = await asyncio.get_event_loop().run_in_executor(None, client.list_files, directory)
+        files = [
+            {
+                "name": f.get("FileName", ""),
+                "size": f.get("FileSize", 0),
+                "path": f"{directory.rstrip('/')}/{f.get('FileName', '')}",
+                "is_dir": False,
+            }
+            for f in raw
+        ]
+        return {"path": path, "files": files}
+
     files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
 
     # Add full path to each file
@@ -1542,11 +1559,50 @@ async def delete_printer_file(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
+    if printer.printer_type == "elegoo_centauri":
+        client = printer_manager.get_client(printer_id)
+        if not client:
+            raise HTTPException(400, "Printer not connected")
+        success = await asyncio.get_event_loop().run_in_executor(None, client.delete_file, path)
+        if not success:
+            raise HTTPException(500, f"Failed to delete file: {path}")
+        return {"status": "deleted", "path": path}
+
     success = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if not success:
         raise HTTPException(500, f"Failed to delete file: {path}")
 
     return {"status": "deleted", "path": path}
+
+
+@router.post("/{printer_id}/files/upload")
+async def upload_printer_file(
+    printer_id: int,
+    file: UploadFile = File(...),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a file to the printer (Elegoo Centauri only)."""
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_upload_supported:
+        raise HTTPException(400, "This printer does not support direct file upload")
+
+    file_data = await file.read()
+    filename = file.filename or "upload.gcode"
+    success = await asyncio.get_event_loop().run_in_executor(
+        None, client.upload_file, file_data, filename
+    )
+    if not success:
+        raise HTTPException(500, "File upload failed")
+
+    return {"status": "uploaded", "filename": filename, "path": f"/local/{filename}"}
 
 
 @router.get("/{printer_id}/storage")

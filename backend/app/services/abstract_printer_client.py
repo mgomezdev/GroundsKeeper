@@ -94,3 +94,24 @@ class AbstractPrinterClient(ABC):
     def set_chamber_light(self, on: bool) -> bool:
         """Turn the chamber/work light on or off. Subclasses override if supported."""
         return False
+
+    # ------------------------------------------------------------------ #
+    # File management (optional — subclasses override when supported)      #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def file_upload_supported(self) -> bool:
+        """True if this client supports direct file upload via upload_file()."""
+        return False
+
+    def upload_file(self, file_data: bytes, filename: str) -> bool:
+        """Upload file bytes to the printer. Returns False by default."""
+        return False
+
+    def list_files(self, directory: str = "/") -> list[dict]:
+        """List files in *directory*. Returns empty list by default."""
+        return []
+
+    def delete_file(self, remote_path: str) -> bool:
+        """Delete a file by path. Returns False by default."""
+        return False
