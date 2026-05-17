@@ -363,14 +363,6 @@ class PrinterStatus(BaseModel):
     current_plate_id: int | None = None
 
 
-class ElegooPrintRequest(BaseModel):
-    archive_id: int
-    plate_id: int = Field(default=1, ge=1)
-    process_name: str = Field(default="")
-    filament_names: list[str] | None = None
-    use_embedded_settings: bool = False
-
-
 class MoonrakerPrinterStatus(BaseModel):
     """Real-time status for non-Bambu printers (Moonraker/Klipper, Elegoo SDCP, etc.).
 

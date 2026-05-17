@@ -23,7 +23,6 @@ from backend.app.schemas.printer import (
     AMSUnit,
     BambuPrinterCreate,
     BambuPrinterUpdate,
-    ElegooPrintRequest,
     FilaSwitchResponse,
     HMSErrorResponse,
     MoonrakerPrinterCreate,
@@ -3496,80 +3495,4 @@ async def get_runtime_debug(
         if state
         else None,
         "is_active": printer.is_active,
-    }
-
-
-@router.post("/{printer_id}/elegoo-print")
-async def elegoo_print(
-    printer_id: int,
-    body: ElegooPrintRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
-):
-    """Slice and print an archive on an Elegoo Centauri Carbon printer.
-
-    Enqueues a background job that: sanitizes the 3MF, slices via OrcaSlicer
-    sidecar using the printer's configured bundle profile, uploads the resulting
-    G-code over HTTP, and starts the print via SDCP.
-    """
-    from sqlalchemy.orm import selectinload
-
-    from backend.app.models.archive import PrintArchive
-    from backend.app.services.background_dispatch import DispatchEnqueueRejected, background_dispatch
-
-    printer = await db.scalar(
-        select(Printer).options(selectinload(Printer.slicer_config)).where(Printer.id == printer_id)
-    )
-    if not printer:
-        raise HTTPException(status_code=404, detail="Printer not found")
-
-    if printer.printer_type != "elegoo_centauri":
-        raise HTTPException(status_code=400, detail="This endpoint is only for Elegoo Centauri printers")
-
-    if not printer.slicer_config:
-        raise HTTPException(status_code=400, detail="Configure a slicer profile in Settings → Slicer first")
-
-    if not printer_manager.is_connected(printer_id):
-        raise HTTPException(status_code=400, detail="Printer is not connected")
-
-    archive = await db.scalar(select(PrintArchive).where(PrintArchive.id == body.archive_id))
-    if not archive:
-        raise HTTPException(status_code=404, detail="Archive not found")
-
-    if not archive.file_path:
-        raise HTTPException(status_code=404, detail="No file available for this archive")
-
-    file_path = settings.base_dir / archive.file_path
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Archive file not found on disk")
-
-    if not body.use_embedded_settings and not body.process_name:
-        raise HTTPException(status_code=400, detail="process_name is required when use_embedded_settings is False")
-
-    options = {
-        "plate_id": body.plate_id,
-        "process_name": body.process_name,
-        "filament_names": body.filament_names,
-        "use_embedded_settings": body.use_embedded_settings,
-    }
-
-    try:
-        dispatch_result = await background_dispatch.dispatch_elegoo_print(
-            archive_id=archive.id,
-            archive_name=archive.filename,
-            printer_id=printer_id,
-            printer_name=printer.name,
-            options=options,
-            requested_by_user_id=getattr(current_user, "id", None),
-            requested_by_username=getattr(current_user, "username", None),
-        )
-    except DispatchEnqueueRejected as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-
-    return {
-        "status": "dispatched",
-        "dispatch_job_id": dispatch_result["dispatch_job_id"],
-        "dispatch_position": dispatch_result["dispatch_position"],
-        "printer_id": printer_id,
-        "archive_id": archive.id,
     }

@@ -194,7 +194,6 @@ async def init_db():
         bambu_printer_config,
         moonraker_printer_config,
         printer,
-        printer_slicer_config,
         project,
         project_bom,
         settings,

@@ -25,13 +25,8 @@ from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.config import settings as app_settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
-import json as _json
-
 from backend.app.models.local_preset import LocalPreset
-from backend.app.models.printer import Printer
-from backend.app.models.printer_slicer_config import PrinterSlicerConfig
 from backend.app.models.user import User
-from backend.app.schemas.slicer import PrinterSlicerConfigIn, PrinterSlicerConfigOut
 from backend.app.schemas.slicer_presets import (
     UnifiedPreset,
     UnifiedPresetsBySlot,
@@ -531,107 +526,6 @@ async def delete_slicer_bundle(
         raise HTTPException(status_code=503, detail=str(e)) from e
     except SlicerApiError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-
-
-@router.get("/printer-configs", response_model=list[PrinterSlicerConfigOut])
-async def list_printer_slicer_configs(
-    db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
-) -> list[PrinterSlicerConfigOut]:
-    """List all per-printer slicer configs, joined with printer name and type."""
-    result = await db.execute(
-        select(PrinterSlicerConfig, Printer)
-        .join(Printer, Printer.id == PrinterSlicerConfig.printer_id)
-        .order_by(Printer.name)
-    )
-    rows = result.all()
-    out = []
-    for cfg, printer in rows:
-        out.append(
-            PrinterSlicerConfigOut(
-                bundle_id=cfg.bundle_id or "",
-                bundle_printer_name=cfg.bundle_printer_name or "",
-                bundle_filament_names=_json.loads(cfg.bundle_filament_names) if cfg.bundle_filament_names else [],
-                printer_id=printer.id,
-                printer_name=printer.name,
-                printer_type=printer.printer_type,
-            )
-        )
-    return out
-
-
-@router.get("/printer-configs/{printer_id}", response_model=PrinterSlicerConfigOut)
-async def get_printer_slicer_config(
-    printer_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
-) -> PrinterSlicerConfigOut:
-    """Get slicer config for one printer. 404 if not configured."""
-    result = await db.execute(
-        select(PrinterSlicerConfig, Printer)
-        .join(Printer, Printer.id == PrinterSlicerConfig.printer_id)
-        .where(PrinterSlicerConfig.printer_id == printer_id)
-    )
-    row = result.first()
-    if not row:
-        raise HTTPException(status_code=404, detail="No slicer config for this printer")
-    cfg, printer = row
-    return PrinterSlicerConfigOut(
-        bundle_id=cfg.bundle_id or "",
-        bundle_printer_name=cfg.bundle_printer_name or "",
-        bundle_filament_names=_json.loads(cfg.bundle_filament_names) if cfg.bundle_filament_names else [],
-        printer_id=printer.id,
-        printer_name=printer.name,
-        printer_type=printer.printer_type,
-    )
-
-
-@router.put("/printer-configs/{printer_id}", response_model=PrinterSlicerConfigOut)
-async def upsert_printer_slicer_config(
-    printer_id: int,
-    body: PrinterSlicerConfigIn,
-    db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
-) -> PrinterSlicerConfigOut:
-    """Create or overwrite the slicer config for a printer."""
-    printer = await db.scalar(select(Printer).where(Printer.id == printer_id))
-    if not printer:
-        raise HTTPException(status_code=404, detail="Printer not found")
-
-    result = await db.execute(select(PrinterSlicerConfig).where(PrinterSlicerConfig.printer_id == printer_id))
-    cfg = result.scalar_one_or_none()
-    if cfg is None:
-        cfg = PrinterSlicerConfig(printer_id=printer_id)
-        db.add(cfg)
-
-    cfg.bundle_id = body.bundle_id
-    cfg.bundle_printer_name = body.bundle_printer_name
-    cfg.bundle_filament_names = _json.dumps(body.bundle_filament_names)
-    await db.commit()
-
-    return PrinterSlicerConfigOut(
-        bundle_id=cfg.bundle_id,
-        bundle_printer_name=cfg.bundle_printer_name,
-        bundle_filament_names=body.bundle_filament_names,
-        printer_id=printer.id,
-        printer_name=printer.name,
-        printer_type=printer.printer_type,
-    )
-
-
-@router.delete("/printer-configs/{printer_id}", status_code=204)
-async def delete_printer_slicer_config(
-    printer_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
-):
-    """Remove the slicer config for a printer."""
-    result = await db.execute(select(PrinterSlicerConfig).where(PrinterSlicerConfig.printer_id == printer_id))
-    cfg = result.scalar_one_or_none()
-    if not cfg:
-        raise HTTPException(status_code=404, detail="No slicer config for this printer")
-    await db.delete(cfg)
-    await db.commit()
 
 
 @router.get("/preview-progress/{request_id}")

@@ -1247,23 +1247,6 @@ export interface SlicerBundle {
   version: string | null;
 }
 
-export interface PrinterSlicerConfig {
-  printer_id: number;
-  printer_name: string;
-  printer_type: string;
-  bundle_id: string;
-  bundle_printer_name: string;
-  bundle_filament_names: string[];
-}
-
-export interface ElegooPrintRequest {
-  archive_id: number;
-  plate_id: number;
-  process_name: string;
-  filament_names: string[] | null;
-  use_embedded_settings: boolean;
-}
-
 // GET /api/v1/slicer/presets — unified listing across cloud / local / standard.
 export type SlicerCloudStatus = 'ok' | 'not_authenticated' | 'expired' | 'unreachable';
 export interface UnifiedPreset {
@@ -5617,8 +5600,6 @@ export const api = {
   // presets by name from a chosen bundle (separate follow-up).
   listSlicerBundles: () =>
     request<SlicerBundle[]>('/slicer/bundles'),
-  getSlicerBundle: (bundleId: string) =>
-    request<SlicerBundle>(`/slicer/bundles/${encodeURIComponent(bundleId)}`),
   importSlicerBundle: (file: File) => {
     // The /slicer/bundles upload accepts multipart with field name "file"
     // (matches the FastAPI route's UploadFile parameter). Bypass `request`
@@ -5642,26 +5623,6 @@ export const api = {
     request<void>(`/slicer/bundles/${encodeURIComponent(bundleId)}`, {
       method: 'DELETE',
     }),
-
-  // Printer slicer configs — per-printer bundle/profile assignments
-  listPrinterSlicerConfigs: () =>
-    request<PrinterSlicerConfig[]>('/slicer/printer-configs'),
-  getPrinterSlicerConfig: (printerId: number) =>
-    request<PrinterSlicerConfig>(`/slicer/printer-configs/${printerId}`),
-  savePrinterSlicerConfig: (printerId: number, data: Omit<PrinterSlicerConfig, 'printer_id' | 'printer_name' | 'printer_type'>) =>
-    request<PrinterSlicerConfig>(`/slicer/printer-configs/${printerId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  deletePrinterSlicerConfig: (printerId: number) =>
-    request<void>(`/slicer/printer-configs/${printerId}`, { method: 'DELETE' }),
-
-  // Elegoo print — slice via OrcaSlicer sidecar and print on Elegoo printer
-  elegooprint: (printerId: number, data: ElegooPrintRequest) =>
-    request<{ status: string; dispatch_job_id: number; dispatch_position: number; printer_id: number; archive_id: number }>(
-      `/printers/${printerId}/elegoo-print`,
-      { method: 'POST', body: JSON.stringify(data) }
-    ),
 
   // Local Presets (OrcaSlicer imports)
   getLocalPresets: () =>
