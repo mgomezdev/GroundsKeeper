@@ -619,6 +619,52 @@ async def camera_stream(
             },
         )
 
+    # Elegoo Centauri: activate MJPEG stream via SDCP Cmd 386, then proxy it
+    if getattr(printer, "printer_type", None) == "elegoo_centauri":
+        import time as _time
+
+        from backend.app.services.external_camera import generate_mjpeg_stream
+        from backend.app.services.elegoo_centauri_client import ElegooCentauriClient
+        from backend.app.services.printer_manager import printer_manager
+
+        client = printer_manager.get_client(printer_id)
+        if not isinstance(client, ElegooCentauriClient):
+            raise HTTPException(status_code=503, detail="Elegoo camera: printer not connected")
+
+        fps = min(max(fps, 1), 10)
+        video_url = await asyncio.get_event_loop().run_in_executor(None, client.start_video_stream)
+        logger.info("Elegoo camera stream activated: %s at %d fps", video_url, fps)
+        _stream_start_times[printer_id] = _time.time()
+        _active_external_streams.add(printer_id)
+
+        async def elegoo_stream_wrapper():
+            # Re-ping Cmd 386 every 50 s to prevent the printer's 60-second inactivity timeout
+            async def _keepalive():
+                while True:
+                    await asyncio.sleep(50)
+                    await asyncio.get_event_loop().run_in_executor(None, client.ping_video_stream)
+
+            keepalive_task = asyncio.create_task(_keepalive())
+            try:
+                async for frame in generate_mjpeg_stream(video_url, "mjpeg", fps):
+                    _last_frame_times[printer_id] = _time.time()
+                    yield frame
+            finally:
+                keepalive_task.cancel()
+                await asyncio.get_event_loop().run_in_executor(None, client.stop_video_stream)
+                _active_external_streams.discard(printer_id)
+                logger.info("Elegoo camera stream ended for printer %s", printer_id)
+
+        return StreamingResponse(
+            elegoo_stream_wrapper(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+
     # Validate FPS - A1/P1 models max out at ~5 FPS
     if is_chamber_image_model(printer.model):
         fps = min(max(fps, 1), 5)

@@ -166,15 +166,19 @@ export interface LongLivedCameraToken {
 // Printer types
 export interface Printer {
   id: number;
+  printer_type: string;  // "bambu" | "elegoo_centauri" | "snapmaker_u1"
   name: string;
-  serial_number: string;
+  serial_number: string | null;  // Bambu only
   ip_address: string;
-  access_code: string;
+  access_code: string | null;    // Bambu only
   model: string | null;
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   is_active: boolean;
   auto_archive: boolean;
+  // Moonraker-specific config
+  moonraker_port: number | null;
+  moonraker_api_key: string | null;
   external_camera_url: string | null;
   external_camera_type: string | null;  // "mjpeg", "rtsp", "snapshot"
   external_camera_enabled: boolean;
@@ -365,13 +369,25 @@ export interface PrinterStatus {
   awaiting_plate_clear: boolean;
   // AMS drying support
   supports_drying: boolean;
+  // Non-Bambu printer fields (present when printer_type != "bambu")
+  printer_type?: string;        // "bambu" | "elegoo_centauri" | "snapmaker_u1" | "moonraker"
+  klippy_state?: string;        // Moonraker: "ready" | "startup" | "shutdown" | "error"; Elegoo: "ready" | "disconnected"
+  fan_speed?: number | null;    // Generic fan speed (part cooling, 0-100)
+  speed_factor?: number | null; // Print speed factor (1.0 = 100%)
+  machine_name?: string | null; // Vendor-reported model name (Elegoo only)
 }
 
 export interface PrinterCreate {
   name: string;
-  serial_number: string;
+  printer_type: string;       // "bambu" | "elegoo_centauri" | "snapmaker_u1"
   ip_address: string;
-  access_code: string;
+  // Bambu-specific
+  serial_number?: string;
+  access_code?: string;
+  // Moonraker-specific
+  port?: number;
+  api_key?: string | null;
+  // Common optional
   model?: string;
   location?: string;
   auto_archive?: boolean;

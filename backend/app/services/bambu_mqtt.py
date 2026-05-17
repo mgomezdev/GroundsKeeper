@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 
+from backend.app.services.abstract_printer_client import AbstractPrinterClient
+
 logger = logging.getLogger(__name__)
 
 # AMS module name prefixes used in get_version responses.
@@ -309,9 +311,10 @@ def get_stage_name(stage: int) -> str:
     return STAGE_NAMES.get(stage, f"Unknown stage ({stage})")
 
 
-class BambuMQTTClient:
+class BambuMQTTClient(AbstractPrinterClient):
     """MQTT client for Bambu Lab printer communication."""
 
+    printer_type = "bambu"
     MQTT_PORT = 8883
 
     # Class-level cache: serial_number -> False when request topic is known unsupported.
@@ -431,6 +434,10 @@ class BambuMQTTClient:
     @property
     def topic_publish(self) -> str:
         return f"device/{self.serial_number}/request"
+
+    @property
+    def connected(self) -> bool:
+        return self.state.connected
 
     # Maximum time (seconds) without a message before considering connection stale
     STALE_TIMEOUT = 60.0

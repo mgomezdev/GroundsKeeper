@@ -91,6 +91,7 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    allowedHosts: ['dionysus'],
     proxy: {
       '/api/v1/ws': {
         target: backendUrl,

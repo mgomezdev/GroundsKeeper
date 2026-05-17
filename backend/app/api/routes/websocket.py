@@ -10,6 +10,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _serialize_state(state, printer_id: int) -> dict:
+    """Serialize any printer state type to a JSON-safe dict."""
+    from backend.app.services.elegoo_centauri_client import ElegooState
+    from backend.app.services.moonraker_client import MoonrakerState
+    from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
+
+    if isinstance(state, ElegooState):
+        return _elegoo_state_to_dict(state, printer_id)
+    if isinstance(state, MoonrakerState):
+        return _moonraker_state_to_dict(state, printer_id)
+    return printer_state_to_dict(state, printer_id, printer_manager.get_model(printer_id))
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates."""
@@ -25,7 +38,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 {
                     "type": "printer_status",
                     "printer_id": printer_id,
-                    "data": printer_state_to_dict(state, printer_id, printer_manager.get_model(printer_id)),
+                    "data": _serialize_state(state, printer_id),
                 }
             )
 
@@ -57,7 +70,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             {
                                 "type": "printer_status",
                                 "printer_id": printer_id,
-                                "data": printer_state_to_dict(state, printer_id, printer_manager.get_model(printer_id)),
+                                "data": _serialize_state(state, printer_id),
                             }
                         )
 

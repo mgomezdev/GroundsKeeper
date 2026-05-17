@@ -1462,6 +1462,7 @@ function PrinterCard({
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { hasPermission } = useAuth();
+  const isMoonrakerPrinter = ['elegoo_centauri', 'snapmaker_u1', 'moonraker'].includes(printer.printer_type ?? '');
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteArchives, setDeleteArchives] = useState(true);
@@ -2478,7 +2479,7 @@ function PrinterCard({
                   })()}
                 </div>
                 <p className="text-sm text-bambu-gray">
-                  {printer.model || 'Unknown Model'}
+                  {printer.model || status?.machine_name || 'Unknown Model'}
                   {/* Nozzle Info - only in expanded */}
                   {viewMode === 'expanded' && status?.nozzles && status.nozzles[0]?.nozzle_diameter && (
                     <span className="ml-1.5 text-bambu-gray" title={status.nozzles[0].nozzle_type || 'Nozzle'}>
@@ -2552,16 +2553,18 @@ function PrinterCard({
                     <RotateCw className={`w-4 h-4 ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
                     {t('printers.forceRefresh')}
                   </button>
-                  <button
-                    className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-                    onClick={() => {
-                      setShowMQTTDebug(true);
-                      setShowMenu(false);
-                    }}
-                  >
-                    <Terminal className="w-4 h-4" />
-                    {t('printers.mqttDebug')}
-                  </button>
+                  {!isMoonrakerPrinter && (
+                    <button
+                      className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+                      onClick={() => {
+                        setShowMQTTDebug(true);
+                        setShowMenu(false);
+                      }}
+                    >
+                      <Terminal className="w-4 h-4" />
+                      {t('printers.mqttDebug')}
+                    </button>
+                  )}
                   <button
                     className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
                       hasPermission('printers:delete')
@@ -2631,8 +2634,8 @@ function PrinterCard({
                   {wifiSignal}dBm
                 </span>
               )}
-              {/* HMS Status Indicator */}
-              {status?.connected && (() => {
+              {/* HMS Status Indicator - Bambu only */}
+              {status?.connected && !isMoonrakerPrinter && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                 return (
                   <button
@@ -2832,8 +2835,127 @@ function PrinterCard({
                   </div>
                 )}
               </div>
+            ) : isMoonrakerPrinter ? (
+              /* Expanded: Moonraker / Elegoo tile */
+              <div className="space-y-3 mt-3">
+                {/* Print progress */}
+                <div className="p-3 bg-bambu-dark rounded-lg">
+                  {(status.state === 'RUNNING' || status.state === 'PAUSE') ? (
+                    <>
+                      <p className="text-xs text-bambu-gray mb-1">
+                        {status.state === 'PAUSE' ? t('printers.status.paused', 'Paused') : t('printers.status.printing')}
+                      </p>
+                      <p className="text-white text-sm mb-2 truncate">{status.current_print || t('printers.unknownPrint', 'Unknown')}</p>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex-1 bg-bambu-dark-tertiary rounded-full h-2 mr-3">
+                          <div
+                            className={`${status.state === 'PAUSE' ? 'bg-status-warning' : 'bg-bambu-green'} h-2 rounded-full transition-all`}
+                            style={{ width: `${status.progress || 0}%` }}
+                          />
+                        </div>
+                        <span className="text-white">{Math.round(status.progress || 0)}%</span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-bambu-gray">
+                        {status.remaining_time != null && status.remaining_time > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatDuration(status.remaining_time * 60)}
+                          </span>
+                        )}
+                        {status.layer_num != null && status.total_layers != null && status.total_layers > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Layers className="w-3 h-3" />
+                            {status.layer_num}/{status.total_layers}
+                          </span>
+                        )}
+                        {status.speed_factor != null && status.speed_factor !== 1 && (
+                          <span className="flex items-center gap-1">
+                            <Gauge className="w-3 h-3" />
+                            {Math.round((status.speed_factor ?? 1) * 100)}%
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs text-bambu-gray mb-1">{t('printers.sort.status')}</p>
+                      <p className="text-white text-sm">
+                        {status.state === 'FINISH' ? t('printers.status.finished', 'Finished') :
+                         status.state === 'FAILED' ? t('printers.status.problem') :
+                         t('printers.status.idle')}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Temperatures */}
+                {status.temperatures && (
+                  <div className="flex items-stretch gap-1.5 flex-wrap">
+                    {status.temperatures.nozzle !== undefined && (
+                      <div className="text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center">
+                        <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color="text-orange-400" isHeating={false} />
+                        <p className="text-[9px] text-bambu-gray">{t('printers.temperatures.nozzle')}</p>
+                        <p className="text-[11px] text-white">{Math.round(status.temperatures.nozzle || 0)}°C</p>
+                        {(status.temperatures.nozzle_target ?? 0) > 0 && (
+                          <p className="text-[9px] text-orange-400">→{Math.round(status.temperatures.nozzle_target ?? 0)}°</p>
+                        )}
+                      </div>
+                    )}
+                    {status.temperatures.bed !== undefined && (
+                      <div className="text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center">
+                        <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color="text-blue-400" isHeating={false} />
+                        <p className="text-[9px] text-bambu-gray">{t('printers.temperatures.bed')}</p>
+                        <p className="text-[11px] text-white">{Math.round(status.temperatures.bed || 0)}°C</p>
+                        {(status.temperatures.bed_target ?? 0) > 0 && (
+                          <p className="text-[9px] text-blue-400">→{Math.round(status.temperatures.bed_target ?? 0)}°</p>
+                        )}
+                      </div>
+                    )}
+                    {status.temperatures.chamber !== undefined && (
+                      <div className="text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center">
+                        <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color="text-green-400" isHeating={false} />
+                        <p className="text-[9px] text-bambu-gray">{t('printers.temperatures.chamber')}</p>
+                        <p className="text-[11px] text-white">{Math.round(status.temperatures.chamber || 0)}°C</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Fan speed + print controls */}
+                {(status.state === 'RUNNING' || status.state === 'PAUSE') && (
+                  <div className="flex items-center justify-between">
+                    {status.fan_speed != null && (
+                      <div
+                        className={`flex items-center gap-1 px-1.5 py-1 rounded ${status.fan_speed > 0 ? 'bg-cyan-500/10' : 'bg-bambu-dark'}`}
+                        title={t('printers.fans.partCooling')}
+                      >
+                        <Fan className={`w-3.5 h-3.5 ${status.fan_speed > 0 ? 'text-cyan-400' : 'text-bambu-gray/50'}`} />
+                        <span className={`text-[10px] ${status.fan_speed > 0 ? 'text-cyan-400' : 'text-bambu-gray/50'}`}>{status.fan_speed}%</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => status.state === 'PAUSE' ? resumePrintMutation.mutate() : setShowPauseConfirm(true)}
+                        disabled={!hasPermission('printers:control') || pausePrintMutation.isPending || resumePrintMutation.isPending}
+                      >
+                        {status.state === 'PAUSE' ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => setShowStopConfirm(true)}
+                        disabled={!hasPermission('printers:control') || stopPrintMutation.isPending}
+                      >
+                        <Square className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
-              /* Expanded: Full status section */
+              /* Expanded: Full Bambu status section */
               <>
                 {/* Current Print or Idle Placeholder */}
                 <div className="mb-4 p-3 bg-bambu-dark rounded-lg relative">
@@ -3368,7 +3490,7 @@ function PrinterCard({
             })()}
 
             {/* AMS Units - 2-Column Grid Layout */}
-            {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
+            {(amsData?.length > 0 || (status.vt_tray?.length ?? 0) > 0) && viewMode === 'expanded' && (() => {
               // Separate regular AMS (4-tray) from HT AMS (1-tray)
               const regularAms = amsData.filter(ams => ams.tray.length > 1);
               const htAms = amsData.filter(ams => ams.tray.length === 1);
@@ -3525,7 +3647,7 @@ function PrinterCard({
                                 const slotPreset = slotPresets?.[globalTrayId];
 
                                 // Fill level fallback chain: Spoolman → Inventory → AMS remain
-                                const trayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx))?.toUpperCase();
+                                const trayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number ?? '', ams.id, slotIdx))?.toUpperCase();
                                 const linkedSpool = trayTag ? linkedSpools?.[trayTag] : undefined;
                                 const spoolmanFill = getSpoolmanFillLevel(linkedSpool);
                                 // Slot-assigned-only spool fill (no tag link required)
@@ -3712,7 +3834,7 @@ function PrinterCard({
                                           // suppressed for Spoolman; the maintainer screenshot shows the badge
                                           // still appearing on slots with a local Devil Design PLA assigned.
                                           onLinkSpool: (spoolmanEnabled && !slotAssignmentForFill && !inventoryAssignment) ? () => {
-                                            const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx)).toUpperCase();
+                                            const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number ?? '', ams.id, slotIdx)).toUpperCase();
                                             setLinkSpoolModal({
                                               tagUid: filamentData.tagUid || linkTag,
                                               trayUuid: filamentData.trayUuid || '',
@@ -3835,7 +3957,7 @@ function PrinterCard({
                   )}
 
                     {/* Row 3: HT AMS + External spools (same style as regular AMS, 4 across) */}
-                    {(htAms.length > 0 || status.vt_tray.length > 0) && (
+                    {(htAms.length > 0 || (status.vt_tray?.length ?? 0) > 0) && (
                       <div className="grid grid-cols-4 gap-3">
                       {/* HT AMS units - name/badge top, slot left, stats right */}
                       {htAms.map((ams) => {
@@ -3857,7 +3979,7 @@ function PrinterCard({
                         const htSlotId = tray?.id ?? 0;
 
                         // Fill level fallback chain: Spoolman → Inventory → AMS remain
-                        const htTrayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId))?.toUpperCase();
+                        const htTrayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number ?? '', ams.id, htSlotId))?.toUpperCase();
                         const htLinkedSpool = htTrayTag ? linkedSpools?.[htTrayTag] : undefined;
                         const htSpoolmanFill = getSpoolmanFillLevel(htLinkedSpool);
                         const htInventoryAssignment = onGetAssignment?.(printer.id, ams.id, htSlotId);
@@ -4107,7 +4229,7 @@ function PrinterCard({
                                       syncMode: spoolmanSyncMode,
                                       // Suppress Link button when slot is occupied by ANY assignment (Phase 13 P13-6d)
                                       onLinkSpool: (spoolmanEnabled && !htSlotAssignmentForFill && !htInventoryAssignment) ? () => {
-                                        const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId)).toUpperCase();
+                                        const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number ?? '', ams.id, htSlotId)).toUpperCase();
                                         setLinkSpoolModal({
                                           tagUid: filamentData.tagUid || linkTag,
                                           trayUuid: filamentData.trayUuid || '',
@@ -4256,13 +4378,13 @@ function PrinterCard({
                         );
                       })}
                       {/* External spool(s) - grouped in one card like regular AMS */}
-                      {status.vt_tray.length > 0 && (
-                        <div className={`p-2.5 bg-bambu-dark rounded-lg border border-bambu-dark-tertiary/30 ${status.vt_tray.length === 1 ? 'max-w-[50%]' : ''}`}>
+                      {(status.vt_tray?.length ?? 0) > 0 && (
+                        <div className={`p-2.5 bg-bambu-dark rounded-lg border border-bambu-dark-tertiary/30 ${status.vt_tray?.length === 1 ? 'max-w-[50%]' : ''}`}>
                           <div className="flex items-center gap-1 mb-2">
                             <span className="text-[10px] text-white font-medium">{t('printers.external')}</span>
                           </div>
-                          <div className={`grid ${status.vt_tray.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-1.5`}>
-                            {[...status.vt_tray].sort((a, b) => (a.id ?? 254) - (b.id ?? 254)).map((extTray) => {
+                          <div className={`grid ${(status.vt_tray?.length ?? 0) > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-1.5`}>
+                            {[...(status.vt_tray ?? [])].sort((a, b) => (a.id ?? 254) - (b.id ?? 254)).map((extTray) => {
                               const extTrayId = extTray.id ?? 254;
                               // On dual-nozzle (H2C/H2D), tray_now=254 means "external spool"
                               // generically — use active_extruder to determine L vs R:
@@ -4278,7 +4400,7 @@ function PrinterCard({
                               const extCloudInfo = extTray.tray_info_idx ? filamentInfo?.[extTray.tray_info_idx] : null;
                               const extSlotPreset = slotPresets?.[255 * 4 + slotTrayId];
 
-                              const extTrayTag = (extTray.tray_uuid || extTray.tag_uid || getFallbackSpoolTag(printer.serial_number, 255, slotTrayId))?.toUpperCase();
+                              const extTrayTag = (extTray.tray_uuid || extTray.tag_uid || getFallbackSpoolTag(printer.serial_number ?? '', 255, slotTrayId))?.toUpperCase();
                               const extLinkedSpool = extTrayTag ? linkedSpools?.[extTrayTag] : undefined;
                               const extSpoolmanFill = getSpoolmanFillLevel(extLinkedSpool);
                               const extInventoryAssignment = onGetAssignment?.(printer.id, 255, slotTrayId);
@@ -4419,7 +4541,7 @@ function PrinterCard({
                                         syncMode: spoolmanSyncMode,
                                         // Suppress Link button when slot is occupied by ANY assignment (Phase 13 P13-6d)
                                         onLinkSpool: (spoolmanEnabled && !extSlotAssignmentForFill && !extInventoryAssignment) ? () => {
-                                          const linkTag = (extFilamentData.trayUuid || extFilamentData.tagUid || getFallbackSpoolTag(printer.serial_number, 255, slotTrayId)).toUpperCase();
+                                          const linkTag = (extFilamentData.trayUuid || extFilamentData.tagUid || getFallbackSpoolTag(printer.serial_number ?? '', 255, slotTrayId)).toUpperCase();
                                           setLinkSpoolModal({
                                             tagUid: extFilamentData.tagUid || linkTag,
                                             trayUuid: extFilamentData.trayUuid || '',
@@ -5480,6 +5602,8 @@ function PrinterCard({
   );
 }
 
+const MOONRAKER_TYPES = ['elegoo_centauri', 'snapmaker_u1', 'moonraker'];
+
 function AddPrinterModal({
   onClose,
   onAdd,
@@ -5490,15 +5614,20 @@ function AddPrinterModal({
   existingSerials: string[];
 }) {
   const { t } = useTranslation();
-  const [form, setForm] = useState<PrinterCreate>({
+  const [form, setForm] = useState<PrinterCreate & { port: number; api_key: string }>({
     name: '',
+    printer_type: 'bambu',
     serial_number: '',
     ip_address: '',
     access_code: '',
+    port: 7125,
+    api_key: '',
     model: '',
     location: '',
     auto_archive: true,
   });
+
+  const isMoonraker = MOONRAKER_TYPES.includes(form.printer_type);
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -5639,8 +5768,8 @@ function AddPrinterModal({
         <CardContent>
           <h2 className="text-xl font-semibold mb-4">{t('printers.addPrinter')}</h2>
 
-          {/* Discovery Section */}
-          <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
+          {/* Discovery Section — Bambu only (SSDP/subnet scan targets Bambu devices) */}
+          {!isMoonraker && <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
             {isDocker && (
               <div className="mb-3">
                 <label className="block text-sm text-bambu-gray mb-1">
@@ -5741,14 +5870,64 @@ function AddPrinterModal({
                 {t('printers.discovery.allConfigured')}
               </p>
             )}
-          </div>
+          </div>}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              onAdd(form);
+              const payload: PrinterCreate = isMoonraker
+                ? {
+                    name: form.name,
+                    printer_type: form.printer_type,
+                    ip_address: form.ip_address,
+                    port: form.port,
+                    api_key: form.api_key || null,
+                    location: form.location || undefined,
+                    auto_archive: form.auto_archive,
+                  }
+                : {
+                    name: form.name,
+                    printer_type: form.printer_type,
+                    ip_address: form.ip_address,
+                    serial_number: form.serial_number,
+                    access_code: form.access_code,
+                    model: form.model || undefined,
+                    location: form.location || undefined,
+                    auto_archive: form.auto_archive,
+                  };
+              onAdd(payload);
             }}
             className="space-y-4"
           >
+            {/* Printer type selector */}
+            <div>
+              <label className="block text-sm text-bambu-gray mb-1">Printer Type</label>
+              <select
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.printer_type}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    printer_type: e.target.value,
+                    // Reset vendor-specific fields when switching type
+                    serial_number: '',
+                    access_code: '',
+                    port: 7125,
+                    api_key: '',
+                    model: '',
+                  })
+                }
+              >
+                <optgroup label="Bambu Lab">
+                  <option value="bambu">Bambu Lab</option>
+                </optgroup>
+                <optgroup label="Klipper / Moonraker">
+                  <option value="elegoo_centauri">Elegoo Centauri Carbon</option>
+                  <option value="snapmaker_u1">Snapmaker U1</option>
+                  <option value="moonraker">Other Moonraker Printer</option>
+                </optgroup>
+              </select>
+            </div>
+
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
               <input
@@ -5772,61 +5951,96 @@ function AddPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
-              <input
-                type="text"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.serial_number}
-                onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
-                placeholder="01P00A000000000"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
-              <input
-                type="password"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
-                onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.modal.fromPrinterSettings')}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
-              <select
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.model || ''}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-              >
-                <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1E">X1E</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1">X1</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P2S">P2S</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P1P">P1P</option>
-                </optgroup>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-              </select>
-            </div>
+
+            {/* Bambu-specific fields */}
+            {!isMoonraker && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.serial_number}
+                    onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
+                    placeholder="01P00A000000000"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+                  <input
+                    type="password"
+                    required
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.access_code}
+                    onChange={(e) => setForm({ ...form, access_code: e.target.value })}
+                    placeholder={t('printers.modal.fromPrinterSettings')}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
+                  <select
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.model || ''}
+                    onChange={(e) => setForm({ ...form, model: e.target.value })}
+                  >
+                    <option value="">{t('printers.modal.selectModel')}</option>
+                    <optgroup label="H2 Series">
+                      <option value="H2C">H2C</option>
+                      <option value="H2D">H2D</option>
+                      <option value="H2D Pro">H2D Pro</option>
+                      <option value="H2S">H2S</option>
+                    </optgroup>
+                    <optgroup label="X2 Series">
+                      <option value="X2D">X2D</option>
+                    </optgroup>
+                    <optgroup label="X1 Series">
+                      <option value="X1E">X1E</option>
+                      <option value="X1C">X1 Carbon</option>
+                      <option value="X1">X1</option>
+                    </optgroup>
+                    <optgroup label="P Series">
+                      <option value="P2S">P2S</option>
+                      <option value="P1S">P1S</option>
+                      <option value="P1P">P1P</option>
+                    </optgroup>
+                    <optgroup label="A1 Series">
+                      <option value="A1">A1</option>
+                      <option value="A1 Mini">A1 Mini</option>
+                    </optgroup>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {/* Moonraker-specific fields */}
+            {isMoonraker && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Moonraker Port</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.port}
+                    onChange={(e) => setForm({ ...form, port: parseInt(e.target.value, 10) || 7125 })}
+                  />
+                  <p className="text-xs text-bambu-gray mt-1">Default is 7125</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">API Key (optional)</label>
+                  <input
+                    type="password"
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.api_key}
+                    onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                    placeholder="Leave blank if not configured"
+                  />
+                </div>
+              </>
+            )}
+
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.locationGroup')}</label>
               <input
@@ -6155,11 +6369,17 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const isMoonraker = MOONRAKER_TYPES.includes(printer.printer_type);
   const [form, setForm] = useState({
     name: printer.name,
     ip_address: printer.ip_address,
+    // Bambu fields
     access_code: '',
     model: printer.model || '',
+    // Moonraker fields
+    port: printer.moonraker_port ?? 7125,
+    api_key: printer.moonraker_api_key ?? '',
+    // Common
     location: printer.location || '',
     auto_archive: printer.auto_archive,
   });
@@ -6188,13 +6408,19 @@ function EditPrinterModal({
     const data: Partial<PrinterCreate> = {
       name: form.name,
       ip_address: form.ip_address,
-      model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
     };
-    // Only include access_code if it was changed
-    if (form.access_code) {
-      data.access_code = form.access_code;
+    if (isMoonraker) {
+      data.port = form.port;
+      if (form.api_key !== (printer.moonraker_api_key ?? '')) {
+        data.api_key = form.api_key || null;
+      }
+    } else {
+      data.model = form.model || undefined;
+      if (form.access_code) {
+        data.access_code = form.access_code;
+      }
     }
     updateMutation.mutate(data);
   };
@@ -6231,59 +6457,91 @@ function EditPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
-              <input
-                type="text"
-                disabled
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray cursor-not-allowed"
-                value={printer.serial_number}
-              />
-              <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
-                onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.accessCodePlaceholder')}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
-              <select
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.model}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-              >
-                <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1E">X1E</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1">X1</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P2S">P2S</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P1P">P1P</option>
-                </optgroup>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-              </select>
-            </div>
+            {/* Bambu-specific fields */}
+            {!isMoonraker && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
+                  <input
+                    type="text"
+                    disabled
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray cursor-not-allowed"
+                    value={printer.serial_number ?? ''}
+                  />
+                  <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
+                  <input
+                    type="password"
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.access_code}
+                    onChange={(e) => setForm({ ...form, access_code: e.target.value })}
+                    placeholder={t('printers.accessCodePlaceholder')}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
+                  <select
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.model}
+                    onChange={(e) => setForm({ ...form, model: e.target.value })}
+                  >
+                    <option value="">{t('printers.modal.selectModel')}</option>
+                    <optgroup label="H2 Series">
+                      <option value="H2C">H2C</option>
+                      <option value="H2D">H2D</option>
+                      <option value="H2D Pro">H2D Pro</option>
+                      <option value="H2S">H2S</option>
+                    </optgroup>
+                    <optgroup label="X2 Series">
+                      <option value="X2D">X2D</option>
+                    </optgroup>
+                    <optgroup label="X1 Series">
+                      <option value="X1E">X1E</option>
+                      <option value="X1C">X1 Carbon</option>
+                      <option value="X1">X1</option>
+                    </optgroup>
+                    <optgroup label="P Series">
+                      <option value="P2S">P2S</option>
+                      <option value="P1S">P1S</option>
+                      <option value="P1P">P1P</option>
+                    </optgroup>
+                    <optgroup label="A1 Series">
+                      <option value="A1">A1</option>
+                      <option value="A1 Mini">A1 Mini</option>
+                    </optgroup>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {/* Moonraker-specific fields */}
+            {isMoonraker && (
+              <>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">Moonraker Port</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.port}
+                    onChange={(e) => setForm({ ...form, port: parseInt(e.target.value, 10) || 7125 })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-bambu-gray mb-1">API Key</label>
+                  <input
+                    type="password"
+                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                    value={form.api_key}
+                    onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                    placeholder="Leave blank to keep unchanged"
+                  />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">Location / Group</label>
               <input
@@ -7399,7 +7657,7 @@ export function PrintersPage() {
         <AddPrinterModal
           onClose={() => setShowAddModal(false)}
           onAdd={(data) => addMutation.mutate(data)}
-          existingSerials={printers?.map(p => p.serial_number) || []}
+          existingSerials={printers?.map(p => p.serial_number ?? '').filter(Boolean) || []}
         />
       )}
 
