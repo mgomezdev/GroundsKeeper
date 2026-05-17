@@ -638,17 +638,24 @@ async def camera_stream(
         _active_external_streams.add(printer_id)
 
         async def elegoo_stream_wrapper():
-            # Re-ping Cmd 386 every 50 s to prevent the printer's 60-second inactivity timeout
             async def _keepalive():
                 while True:
                     await asyncio.sleep(50)
                     await asyncio.get_event_loop().run_in_executor(None, client.ping_video_stream)
 
             keepalive_task = asyncio.create_task(_keepalive())
+            current_url = video_url
             try:
-                async for frame in generate_mjpeg_stream(video_url, "mjpeg", fps):
-                    _last_frame_times[printer_id] = _time.time()
-                    yield frame
+                for attempt in range(3):
+                    frame_count = 0
+                    async for frame in generate_mjpeg_stream(current_url, "mjpeg", fps):
+                        _last_frame_times[printer_id] = _time.time()
+                        frame_count += 1
+                        yield frame
+                    if frame_count == 0:
+                        break  # never connected — don't retry
+                    logger.warning("Elegoo camera stream stalled (attempt %d/3), recovering via Cmd 386", attempt + 1)
+                    current_url = await asyncio.get_event_loop().run_in_executor(None, client.start_video_stream)
             finally:
                 keepalive_task.cancel()
                 await asyncio.get_event_loop().run_in_executor(None, client.stop_video_stream)
