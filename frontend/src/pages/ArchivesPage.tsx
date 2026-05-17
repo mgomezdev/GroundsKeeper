@@ -67,6 +67,7 @@ import type { Archive, ProjectListItem } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { PrintModal } from '../components/PrintModal';
+import { ElegooPrintModal } from '../components/ElegooPrintModal';
 import { UploadModal } from '../components/UploadModal';
 import { PurgeArchivesModal } from '../components/PurgeArchivesModal';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -142,6 +143,7 @@ async function openInSlicerWithToken(
 function ArchiveCard({
   archive,
   printerName,
+  printerType,
   isSelected,
   onSelect,
   selectionMode,
@@ -156,6 +158,7 @@ function ArchiveCard({
 }: {
   archive: Archive;
   printerName: string;
+  printerType?: string;
   isSelected: boolean;
   onSelect: (id: number) => void;
   selectionMode: boolean;
@@ -179,6 +182,7 @@ function ArchiveCard({
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [showReprint, setShowReprint] = useState(false);
+  const [showElegooPrint, setShowElegooPrint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // #1343: when true, the delete also drops the row from Quick Stats. Default
@@ -393,7 +397,7 @@ function ArchiveCard({
       {
         label: t('archives.menu.print'),
         icon: <Printer className="w-4 h-4" />,
-        onClick: () => setShowReprint(true),
+        onClick: () => printerType === 'elegoo_centauri' ? setShowElegooPrint(true) : setShowReprint(true),
         disabled: !archive.file_path || !canModify('archives', 'reprint', archive.created_by_id),
         title: !archive.file_path ? t('archives.card.noFileForReprint') : !canModify('archives', 'reprint', archive.created_by_id) ? t('archives.permission.noReprint') : undefined,
       },
@@ -1109,7 +1113,7 @@ function ArchiveCard({
                 variant="primary"
                 size="sm"
                 className="flex-1 min-w-0 overflow-hidden"
-                onClick={() => setShowReprint(true)}
+                onClick={() => printerType === 'elegoo_centauri' ? setShowElegooPrint(true) : setShowReprint(true)}
                 disabled={!archive.file_path || !canModify('archives', 'reprint', archive.created_by_id)}
                 title={!archive.file_path ? t('archives.card.noFileForReprint') : !canModify('archives', 'reprint', archive.created_by_id) ? t('archives.card.noPermissionReprint') : undefined}
               >
@@ -1236,6 +1240,16 @@ function ArchiveCard({
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
           onClose={() => setShowReprint(false)}
+        />
+      )}
+
+      {/* Elegoo Slice & Print Modal */}
+      {showElegooPrint && archive.printer_id && (
+        <ElegooPrintModal
+          archiveId={archive.id}
+          archiveName={archive.print_name || archive.filename}
+          printerId={archive.printer_id}
+          onClose={() => setShowElegooPrint(false)}
         />
       )}
 
@@ -1499,6 +1513,7 @@ function ArchiveCard({
 function ArchiveListRow({
   archive,
   printerName,
+  printerType,
   isSelected,
   onSelect,
   selectionMode,
@@ -1511,6 +1526,7 @@ function ArchiveListRow({
 }: {
   archive: Archive;
   printerName: string;
+  printerType?: string;
   isSelected: boolean;
   onSelect: (id: number) => void;
   selectionMode: boolean;
@@ -1531,6 +1547,7 @@ function ArchiveListRow({
   const [deletePurgeStats, setDeletePurgeStats] = useState(false);
   const navigate = useNavigate();
   const [showReprint, setShowReprint] = useState(false);
+  const [showElegooPrint, setShowElegooPrint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [showTimelapse, setShowTimelapse] = useState(false);
@@ -1715,7 +1732,7 @@ function ArchiveListRow({
       {
         label: t('archives.menu.print'),
         icon: <Printer className="w-4 h-4" />,
-        onClick: () => setShowReprint(true),
+        onClick: () => printerType === 'elegoo_centauri' ? setShowElegooPrint(true) : setShowReprint(true),
         disabled: !archive.file_path || !canModify('archives', 'reprint', archive.created_by_id),
         title: !archive.file_path ? t('archives.card.noFileForReprint') : !canModify('archives', 'reprint', archive.created_by_id) ? t('archives.permission.noReprint') : undefined,
       },
@@ -2107,7 +2124,7 @@ function ArchiveListRow({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowReprint(true)}
+              onClick={() => printerType === 'elegoo_centauri' ? setShowElegooPrint(true) : setShowReprint(true)}
               disabled={!canModify('archives', 'reprint', archive.created_by_id)}
               title={!canModify('archives', 'reprint', archive.created_by_id) ? t('archives.card.noPermissionReprint') : t('archives.card.reprint')}
               className="text-bambu-green hover:text-bambu-green-light hover:bg-bambu-green/10"
@@ -2207,6 +2224,16 @@ function ArchiveListRow({
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
           onClose={() => setShowReprint(false)}
+        />
+      )}
+
+      {/* Elegoo Slice & Print Modal */}
+      {showElegooPrint && archive.printer_id && (
+        <ElegooPrintModal
+          archiveId={archive.id}
+          archiveName={archive.print_name || archive.filename}
+          printerId={archive.printer_id}
+          onClose={() => setShowElegooPrint(false)}
         />
       )}
 
@@ -2783,6 +2810,7 @@ export function ArchivesPage() {
   }, [logPageSize]);
 
   const printerMap = new Map(printers?.map((p) => [p.id, p.name]) || []);
+  const printerTypeMap = new Map(printers?.map((p) => [p.id, p.printer_type]) || []);
 
   // Extract unique materials and colors from archives
   const uniqueMaterials = [...new Set(
@@ -3521,6 +3549,7 @@ export function ArchivesPage() {
                 key={archive.id}
                 archive={archive}
                 printerName={archive.printer_id ? printerMap.get(archive.printer_id) || 'Unknown' : (archive.sliced_for_model || 'No Printer')}
+                printerType={archive.printer_id ? printerTypeMap.get(archive.printer_id) : undefined}
                 isSelected={selectedIds.has(archive.id)}
                 onSelect={toggleSelect}
                 selectionMode={selectionMode}
@@ -3564,6 +3593,7 @@ export function ArchivesPage() {
                   key={archive.id}
                   archive={archive}
                   printerName={archive.printer_id ? printerMap.get(archive.printer_id) || 'Unknown' : (archive.sliced_for_model || 'No Printer')}
+                  printerType={archive.printer_id ? printerTypeMap.get(archive.printer_id) : undefined}
                   isSelected={selectedIds.has(archive.id)}
                   onSelect={toggleSelect}
                   selectionMode={selectionMode}

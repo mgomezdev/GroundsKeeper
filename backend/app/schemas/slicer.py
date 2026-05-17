@@ -173,6 +173,18 @@ class SliceRequest(BaseModel):
         return self
 
 
+class PrinterSlicerConfigIn(BaseModel):
+    bundle_id: str
+    bundle_printer_name: str
+    bundle_filament_names: list[str]
+
+
+class PrinterSlicerConfigOut(PrinterSlicerConfigIn):
+    printer_id: int
+    printer_name: str
+    printer_type: str
+
+
 class SliceResponse(BaseModel):
     """Response from `POST /library/files/{file_id}/slice`. The result lands
     in the user's library as a new ``LibraryFile`` (in the same folder as

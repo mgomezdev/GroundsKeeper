@@ -59,6 +59,9 @@ class Printer(Base):
     moonraker_config: Mapped["MoonrakerPrinterConfig | None"] = relationship(
         back_populates="printer", cascade="all, delete-orphan", uselist=False
     )
+    slicer_config: Mapped["PrinterSlicerConfig | None"] = relationship(
+        back_populates="printer", cascade="all, delete-orphan", uselist=False
+    )
 
 
 from backend.app.models.ams_history import AMSSensorHistory  # noqa: E402
@@ -68,4 +71,5 @@ from backend.app.models.kprofile_note import KProfileNote  # noqa: E402
 from backend.app.models.maintenance import PrinterMaintenance  # noqa: E402
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig  # noqa: E402
 from backend.app.models.notification import NotificationProvider  # noqa: E402
+from backend.app.models.printer_slicer_config import PrinterSlicerConfig  # noqa: E402
 from backend.app.models.smart_plug import SmartPlug  # noqa: E402

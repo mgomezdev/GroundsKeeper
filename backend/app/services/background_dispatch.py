@@ -47,7 +47,7 @@ class DispatchEnqueueRejected(Exception):
 @dataclass(slots=True)
 class PrintDispatchJob:
     id: int
-    kind: Literal["reprint_archive", "print_library_file"]
+    kind: Literal["reprint_archive", "print_library_file", "elegoo_print"]
     source_id: int
     source_name: str
     printer_id: int
@@ -153,6 +153,28 @@ class BackgroundDispatchService:
         async with self._lock:
             return self._build_state_payload_unlocked()
 
+    async def dispatch_elegoo_print(
+        self,
+        *,
+        archive_id: int,
+        archive_name: str,
+        printer_id: int,
+        printer_name: str,
+        options: dict[str, Any],
+        requested_by_user_id: int | None,
+        requested_by_username: str | None,
+    ) -> dict[str, Any]:
+        return await self._dispatch(
+            kind="elegoo_print",
+            source_id=archive_id,
+            source_name=archive_name,
+            printer_id=printer_id,
+            printer_name=printer_name,
+            options=options,
+            requested_by_user_id=requested_by_user_id,
+            requested_by_username=requested_by_username,
+        )
+
     async def dispatch_print_library_file(
         self,
         *,
@@ -256,7 +278,7 @@ class BackgroundDispatchService:
     async def _dispatch(
         self,
         *,
-        kind: Literal["reprint_archive", "print_library_file"],
+        kind: Literal["reprint_archive", "print_library_file", "elegoo_print"],
         source_id: int,
         source_name: str,
         printer_id: int,
@@ -541,6 +563,9 @@ class BackgroundDispatchService:
             return
         if job.kind == "print_library_file":
             await self._run_print_library_file(job)
+            return
+        if job.kind == "elegoo_print":
+            await self._run_elegoo_print(job)
             return
         raise RuntimeError(f"Unknown dispatch job kind: {job.kind}")
 
@@ -1068,6 +1093,130 @@ class BackgroundDispatchService:
     def _is_sliced_file(filename: str) -> bool:
         lower = filename.lower()
         return lower.endswith(".gcode") or lower.endswith(".gcode.3mf")
+
+    async def _run_elegoo_print(self, job: PrintDispatchJob):
+        import json as _json
+
+        from sqlalchemy.orm import selectinload
+
+        from backend.app.api.routes.library import _sanitize_project_settings_sentinels
+        from backend.app.api.routes.settings import get_setting
+        from backend.app.models.archive import PrintArchive
+        from backend.app.services.slicer_api import SlicerApiService
+
+        async with async_session() as db:
+            archive = await db.scalar(select(PrintArchive).where(PrintArchive.id == job.source_id))
+            if not archive:
+                raise RuntimeError("Archive not found")
+
+            file_path = settings.base_dir / archive.file_path
+            if not file_path.exists():
+                raise RuntimeError("Archive file not found on disk")
+
+            printer = await db.scalar(
+                select(Printer).options(selectinload(Printer.slicer_config)).where(Printer.id == job.printer_id)
+            )
+            if not printer:
+                raise RuntimeError("Printer not found")
+
+            slicer_cfg = printer.slicer_config
+            if not slicer_cfg:
+                raise RuntimeError("No slicer config — set a bundle profile in Settings → Slicer first")
+
+            printer_name = printer.name
+
+            if not printer_manager.is_connected(job.printer_id):
+                raise RuntimeError("Printer is not connected")
+
+            plate_id: int = job.options.get("plate_id", 1)
+            process_name: str = job.options.get("process_name", "")
+            use_embedded: bool = job.options.get("use_embedded_settings", False)
+            filament_names_override: list[str] | None = job.options.get("filament_names")
+
+            filament_names: list[str] = filament_names_override or (
+                _json.loads(slicer_cfg.bundle_filament_names) if slicer_cfg.bundle_filament_names else []
+            )
+
+            preferred_slicer = (await get_setting(db, "preferred_slicer")) or "orcaslicer"
+            if preferred_slicer == "orcaslicer":
+                configured_url = await get_setting(db, "orcaslicer_api_url")
+                api_url = (configured_url or settings.slicer_api_url).strip()
+            else:
+                configured_url = await get_setting(db, "bambu_studio_api_url")
+                api_url = (configured_url or settings.bambu_studio_api_url).strip()
+
+            if not api_url:
+                raise RuntimeError("No slicer sidecar configured (preferred_slicer setting)")
+
+            file_bytes = file_path.read_bytes()
+            archive_filename = archive.filename
+
+            await self._set_active_message(job, f"Sanitizing {archive_filename} for OrcaSlicer...")
+            self._raise_if_cancel_requested(job)
+
+            sanitized_bytes = _sanitize_project_settings_sentinels(file_bytes)
+
+            await self._set_active_message(job, f"Slicing {archive_filename} with OrcaSlicer (plate {plate_id})...")
+            self._raise_if_cancel_requested(job)
+
+            loop = asyncio.get_running_loop()
+
+            async with SlicerApiService(base_url=api_url) as svc:
+                if use_embedded:
+                    result = await svc.slice_without_profiles(
+                        model_bytes=sanitized_bytes,
+                        model_filename=archive_filename,
+                        plate=plate_id,
+                    )
+                else:
+                    if not process_name:
+                        raise RuntimeError("process_name is required when use_embedded_settings is False")
+                    result = await svc.slice_with_bundle(
+                        model_bytes=sanitized_bytes,
+                        model_filename=archive_filename,
+                        bundle_id=slicer_cfg.bundle_id or "",
+                        printer_name=slicer_cfg.bundle_printer_name or "",
+                        process_name=process_name,
+                        filament_names=filament_names,
+                        plate=plate_id,
+                    )
+
+            gcode_bytes = result.content
+
+            base_name = archive_filename
+            for ext in (".gcode.3mf", ".3mf", ".gcode"):
+                if base_name.lower().endswith(ext):
+                    base_name = base_name[: -len(ext)]
+                    break
+            base_name = base_name.replace(" ", "_")
+            gcode_filename = f"{base_name}_plate{plate_id}.gcode"
+
+            self._raise_if_cancel_requested(job)
+            await self._set_active_message(job, f"Uploading {gcode_filename} to {printer_name}...")
+
+            client = printer_manager.get_client(job.printer_id)
+            if client is None:
+                raise RuntimeError("Printer client not available")
+
+            uploaded = await loop.run_in_executor(None, client.upload_file, gcode_bytes, gcode_filename)
+            if not uploaded:
+                raise RuntimeError("Failed to upload G-code to printer")
+
+            await self._set_active_upload_progress(job, len(gcode_bytes), len(gcode_bytes))
+
+            self._raise_if_cancel_requested(job)
+            await self._set_active_message(job, f"Starting print on {printer_name}...")
+
+            started = await loop.run_in_executor(None, client.start_print, f"/local/{gcode_filename}")
+            if not started:
+                raise RuntimeError("Failed to start print on Elegoo printer")
+
+            if job.requested_by_user_id and job.requested_by_username:
+                printer_manager.set_current_print_user(
+                    job.printer_id,
+                    job.requested_by_user_id,
+                    job.requested_by_username,
+                )
 
 
 background_dispatch = BackgroundDispatchService()
