@@ -1,6 +1,21 @@
 import asyncio
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import ClassVar
+
+
+@dataclass
+class StartPrintOptions:
+    """Vendor-agnostic options for starting a print job. Unsupported fields are ignored."""
+
+    plate_id: int = 1
+    ams_mapping: list[int] | None = None
+    bed_levelling: bool = True
+    flow_cali: bool = False
+    vibration_cali: bool = True
+    layer_inspect: bool = False
+    timelapse: bool = False
+    use_ams: bool = True
 
 
 class AbstractPrinterClient(ABC):
@@ -41,7 +56,7 @@ class AbstractPrinterClient(ABC):
     # ------------------------------------------------------------------ #
 
     @abstractmethod
-    def start_print(self, file_name: str) -> bool:
+    def start_print(self, file_name: str, options: StartPrintOptions | None = None) -> bool:
         """Initiate a print job. Returns True if the command was accepted."""
 
     @abstractmethod
