@@ -1582,6 +1582,8 @@ async def enable_mqtt_logging(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     success = printer_manager.enable_logging(printer_id, True)
     if not success:
@@ -1601,6 +1603,8 @@ async def disable_mqtt_logging(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     success = printer_manager.enable_logging(printer_id, False)
     if not success:
@@ -1620,6 +1624,8 @@ async def get_mqtt_logs(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     logs = printer_manager.get_logs(printer_id)
     return {
@@ -1647,6 +1653,8 @@ async def clear_mqtt_logs(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     printer_manager.clear_logs(printer_id)
     return {"status": "cleared"}
@@ -2523,10 +2531,13 @@ async def save_ams_label(
     older firmware that does not report a serial) a synthetic key based on the
     printer_id and ams_id is used as a fallback.
     """
-    # Verify printer exists
+    # Verify printer exists and is Bambu (AMS is Bambu-specific)
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    if not result.scalar_one_or_none():
+    printer = result.scalar_one_or_none()
+    if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "AMS labels are only applicable to Bambu printers")
 
     # Determine the serial key to store under
     stripped = body.ams_serial.strip() if body.ams_serial else ""

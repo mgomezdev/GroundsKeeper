@@ -469,8 +469,7 @@ class PrinterManager:
         if client and client.connected:
             logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
             client.state.connected = False
-            if isinstance(client, BambuMQTTClient):
-                client.state.state = "unknown"
+            client.on_forced_offline()
             # Trigger the status change callback to broadcast via WebSocket
             if self._on_status_change:
                 self._schedule_async(self._on_status_change(printer_id, client.state))

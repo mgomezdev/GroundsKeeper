@@ -4895,6 +4895,9 @@ class BambuMQTTClient(AbstractPrinterClient):
         logger.info("[%s] Set liveview %s", self.serial_number, "enabled" if enable else "disabled")
         return True
 
+    def on_forced_offline(self) -> None:
+        self.state.state = "unknown"
+
     def get_loaded_filaments(self) -> list[dict]:
         """Return AMS trays + external spools in normalized format."""
         raw_data = self.state.raw_data or {}

@@ -191,11 +191,12 @@ def normalize_printer_model(raw_model: str | None) -> str | None:
 
     Args:
         raw_model: The printer_model string from 3MF metadata
-            (e.g., "Bambu Lab X1 Carbon")
+            (e.g., "Bambu Lab X1 Carbon", "Elegoo Centauri Carbon")
 
     Returns:
         Normalized short name (e.g., "X1C") or None if input is empty.
-        Unknown models have "Bambu Lab " prefix stripped.
+        Known Bambu models are mapped; unknown Bambu models have "Bambu Lab " prefix stripped.
+        Non-Bambu models are returned as-is.
     """
     if not raw_model:
         return None
@@ -204,6 +205,10 @@ def normalize_printer_model(raw_model: str | None) -> str | None:
     if raw_model in PRINTER_MODEL_MAP:
         return PRINTER_MODEL_MAP[raw_model]
 
-    # Strip "Bambu Lab " prefix for unknown models
-    stripped = raw_model.replace("Bambu Lab ", "").strip()
-    return stripped or None
+    # Strip "Bambu Lab " prefix only for unknown Bambu models not yet in the map
+    if raw_model.startswith("Bambu Lab "):
+        stripped = raw_model[len("Bambu Lab "):].strip()
+        return stripped or None
+
+    # Non-Bambu models: return as-is (Elegoo, Snapmaker, etc.)
+    return raw_model.strip() or None

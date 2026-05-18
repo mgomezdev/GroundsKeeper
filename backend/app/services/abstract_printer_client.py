@@ -141,3 +141,7 @@ class AbstractPrinterClient(ABC):
     def get_loaded_filaments(self) -> list[dict]:
         """Return loaded filaments in normalized format. Empty list means unknown."""
         return []
+
+    def on_forced_offline(self) -> None:
+        """Called by PrinterManager when power loss is detected (e.g. smart plug).
+        Override to reset vendor-specific state fields beyond connected=False."""
