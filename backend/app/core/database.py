@@ -1789,6 +1789,9 @@ async def run_migrations(conn):
     # Migration: Add awaiting_plate_clear column to printers (#961)
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN awaiting_plate_clear BOOLEAN DEFAULT FALSE NOT NULL")
 
+    # Migration: Add out_of_queue flag — printer accepts direct jobs but is excluded from automatic queue dispatch
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN out_of_queue BOOLEAN DEFAULT 0")
+
     # Migration: Add REST/Webhook smart plug fields
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_url VARCHAR(500)")
     await _safe_execute(conn, "ALTER TABLE smart_plugs ADD COLUMN rest_on_body TEXT")

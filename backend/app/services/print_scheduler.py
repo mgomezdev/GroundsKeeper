@@ -498,6 +498,7 @@ class PrintScheduler:
             select(Printer)
             .where(func.lower(Printer.model) == normalized_model.lower())
             .where(Printer.is_active == True)  # noqa: E712
+            .where(Printer.out_of_queue == False)  # noqa: E712
         )
 
         # Add location filter if specified

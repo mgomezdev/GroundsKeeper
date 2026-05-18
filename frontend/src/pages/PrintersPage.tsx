@@ -1816,6 +1816,14 @@ function PrinterCard({
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToDelete'), 'error'),
   });
 
+  const toggleOutOfQueueMutation = useMutation({
+    mutationFn: (outOfQueue: boolean) => api.updatePrinter(printer.id, { out_of_queue: outOfQueue }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['printers'] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdate'), 'error'),
+  });
+
   const connectMutation = useMutation({
     mutationFn: () => api.connectPrinter(printer.id),
     onSuccess: () => {
@@ -2567,6 +2575,32 @@ function PrinterCard({
                   )}
                   <button
                     className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
+                      hasPermission('printers:update')
+                        ? printer.out_of_queue ? 'text-green-400 hover:bg-bambu-dark-tertiary' : 'text-amber-400 hover:bg-bambu-dark-tertiary'
+                        : 'opacity-50 cursor-not-allowed'
+                    }`}
+                    onClick={() => {
+                      if (!hasPermission('printers:update')) return;
+                      toggleOutOfQueueMutation.mutate(!printer.out_of_queue);
+                      setShowMenu(false);
+                    }}
+                    disabled={toggleOutOfQueueMutation.isPending}
+                    title={!hasPermission('printers:update') ? t('printers.permission.noEdit') : undefined}
+                  >
+                    {printer.out_of_queue ? (
+                      <>
+                        <LogIn className="w-4 h-4" />
+                        Return to queue
+                      </>
+                    ) : (
+                      <>
+                        <LogOut className="w-4 h-4" />
+                        Remove from queue
+                      </>
+                    )}
+                  </button>
+                  <button
+                    className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
                       hasPermission('printers:delete')
                         ? 'text-red-400 hover:bg-bambu-dark-tertiary'
                         : 'text-red-400/50 cursor-not-allowed'
@@ -2604,6 +2638,13 @@ function PrinterCard({
                 )}
                 {status?.connected ? t('printers.connection.connected') : t('printers.connection.offline')}
               </span>
+              {/* Out-of-queue badge */}
+              {printer.out_of_queue && (
+                <span className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-amber-500/20 text-amber-400">
+                  <LogOut className="w-3 h-3" />
+                  Out of queue
+                </span>
+              )}
               {/* Network connection indicator */}
               {status?.connected && status?.wired_network && (
                 <span

@@ -75,6 +75,7 @@ class PrinterUpdate(BaseModel):
     camera_rotation: int | None = None
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
+    out_of_queue: bool | None = None
 
 
 class BambuPrinterUpdate(PrinterUpdate):
@@ -109,6 +110,7 @@ class PrinterResponse(BaseModel):
     camera_rotation: int = 0
     plate_detection_enabled: bool = False
     plate_detection_roi: PlateDetectionROI | None = None
+    out_of_queue: bool = False
     created_at: datetime
     updated_at: datetime
     # Bambu-specific config (None for non-Bambu printers)
@@ -143,6 +145,7 @@ class PrinterResponse(BaseModel):
             "camera_rotation": printer.camera_rotation,
             "print_hours_offset": printer.print_hours_offset,
             "plate_detection_enabled": printer.plate_detection_enabled,
+            "out_of_queue": printer.out_of_queue,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,
             # Bambu config

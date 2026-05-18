@@ -62,6 +62,9 @@ node_modules/
 
 data/
 
+# Local bind-mount volumes for development (survives docker volume prune)
+docker-data/
+
 # JWT secret file (should be in data dir, but protect project root too)
 .jwt_secret
 
