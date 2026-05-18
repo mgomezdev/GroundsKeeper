@@ -265,6 +265,8 @@ async def get_developer_mode_warnings(
 
     warnings = []
     for printer in printers:
+        if printer.printer_type != "bambu":
+            continue
         state = statuses.get(printer.id)
         if state and state.connected and state.developer_mode is False:
             warnings.append(
