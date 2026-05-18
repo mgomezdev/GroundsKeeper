@@ -3130,34 +3130,25 @@ class BambuMQTTClient(AbstractPrinterClient):
         self._client.connect_async(self.ip_address, self.MQTT_PORT, keepalive=30)
         self._client.loop_start()
 
-    def start_print(
-        self,
-        filename: str,
-        plate_id: int = 1,
-        ams_mapping: list[int] | None = None,
-        bed_levelling: bool = True,
-        flow_cali: bool = False,
-        vibration_cali: bool = True,
-        layer_inspect: bool = False,
-        timelapse: bool = False,
-        use_ams: bool = True,
-    ):
+    def start_print(self, file_name: str, options=None) -> bool:
         """Start a print job on the printer.
 
         The file should already be uploaded to the printer's root directory via FTP.
-
-        Args:
-            filename: Name of the uploaded file
-            plate_id: Plate number to print (default 1)
-            ams_mapping: List of tray IDs for each filament slot in the 3MF.
-                         Global tray ID = (ams_id * 4) + slot_id, external = 254
-            timelapse: Record timelapse video
-            bed_levelling: Auto bed levelling before print
-            flow_cali: Flow/pressure advance calibration
-            vibration_cali: Vibration compensation calibration
-            layer_inspect: First layer AI inspection
-            use_ams: Use AMS for automatic filament changes
+        ``options`` is a ``StartPrintOptions`` instance (or None for defaults).
         """
+        from backend.app.services.abstract_printer_client import StartPrintOptions
+
+        opts = options if isinstance(options, StartPrintOptions) else StartPrintOptions()
+        filename = file_name
+        plate_id = opts.plate_id
+        ams_mapping = opts.ams_mapping
+        bed_levelling = opts.bed_levelling
+        flow_cali = opts.flow_cali
+        vibration_cali = opts.vibration_cali
+        layer_inspect = opts.layer_inspect
+        timelapse = opts.timelapse
+        use_ams = opts.use_ams
+
         if self._client and self.state.connected:
             # Bambu print command format - matches Bambu Studio's format
             # H2D series requires integer values (0/1) for calibration/leveling fields

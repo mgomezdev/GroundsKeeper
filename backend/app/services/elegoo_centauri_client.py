@@ -463,7 +463,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
     def check_staleness(self) -> bool:
         return self.state.connected
 
-    def start_print(self, file_name: str) -> bool:
+    def start_print(self, file_name: str, options=None) -> bool:
         return self._send(_CMD_START_PRINT, {"Filename": file_name}, wait_ack=True)
 
     def stop_print(self) -> bool:

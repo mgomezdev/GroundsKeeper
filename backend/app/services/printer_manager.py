@@ -499,17 +499,18 @@ class PrinterManager:
             caller.name,
         )
         if printer_id in self._clients:
-            return self._clients[printer_id].start_print(
-                filename,
-                plate_id,
+            from backend.app.services.abstract_printer_client import StartPrintOptions
+            options = StartPrintOptions(
+                plate_id=plate_id,
                 ams_mapping=ams_mapping,
-                timelapse=timelapse,
                 bed_levelling=bed_levelling,
                 flow_cali=flow_cali,
                 vibration_cali=vibration_cali,
                 layer_inspect=layer_inspect,
+                timelapse=timelapse,
                 use_ams=use_ams,
             )
+            return self._clients[printer_id].start_print(filename, options)
         return False
 
     def stop_print(self, printer_id: int) -> bool:

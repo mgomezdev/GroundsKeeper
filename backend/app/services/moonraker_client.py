@@ -254,7 +254,7 @@ class MoonrakerClient(AbstractPrinterClient):
         # Poll thread updates state continuously; no separate staleness check needed
         return self.state.connected
 
-    def start_print(self, file_name: str) -> bool:
+    def start_print(self, file_name: str, options=None) -> bool:
         return self._post("/printer/print/start", filename=file_name) is not None
 
     def stop_print(self) -> bool:
