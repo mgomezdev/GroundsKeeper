@@ -145,3 +145,13 @@ class AbstractPrinterClient(ABC):
     def on_forced_offline(self) -> None:
         """Called by PrinterManager when power loss is detected (e.g. smart plug).
         Override to reset vendor-specific state fields beyond connected=False."""
+
+    @property
+    def is_idle(self) -> bool:
+        """True when the printer has no active job and can accept a new one."""
+        return False
+
+    @property
+    def is_printing(self) -> bool:
+        """True when the printer is actively printing (including warmup/leveling/pausing)."""
+        return False

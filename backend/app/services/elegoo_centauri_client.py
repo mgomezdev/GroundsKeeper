@@ -119,6 +119,17 @@ class ElegooState:
     # raw is excluded from equality so it never suppresses change detection
     raw: dict = field(default_factory=dict, compare=False)
 
+    @property
+    def raw_data(self) -> dict | None:
+        """Compat shim: Bambu code guards on 'if state.raw_data'. Always None here so
+        those guards skip AMS/vt_tray processing that doesn't apply to Elegoo."""
+        return None
+
+    @property
+    def state(self) -> str:
+        """Compat shim: returns print_state for logging and dedup-key use."""
+        return self.print_state
+
 
 class ElegooCentauriClient(AbstractPrinterClient):
     """Elegoo Centauri Carbon SDCP client.
@@ -605,6 +616,14 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 "is_external": True,
             }
         ]
+
+    @property
+    def is_idle(self) -> bool:
+        return self.state.print_state in ("standby", "complete", "cancelled")
+
+    @property
+    def is_printing(self) -> bool:
+        return self.state.print_state in ("printing", "warming_up", "leveling", "pausing")
 
     def request_status_update(self) -> bool:
         return self._send(_CMD_GET_STATUS)

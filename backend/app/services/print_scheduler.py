@@ -1169,7 +1169,8 @@ class PrintScheduler:
             )
             return False
 
-        idle = state.state in ("IDLE", "FINISH", "FAILED")
+        client = printer_manager.get_client(printer_id)
+        idle = client.is_idle if client else False
         if not idle:
             logger.debug("Printer %d: not idle — state=%s", printer_id, state.state)
         return idle
@@ -1331,8 +1332,8 @@ class PrintScheduler:
                 logger.debug("Auto-drying: printer %d skipped — model %s does not support drying", pid, model)
                 continue
 
-            # Check each AMS unit from raw_data
-            ams_list = state.raw_data.get("ams", [])
+            # Check each AMS unit from raw_data (Bambu-only; non-Bambu returns None)
+            ams_list = (state.raw_data or {}).get("ams", [])
             logger.debug("Auto-drying: printer %d — checking %d AMS units", pid, len(ams_list))
             for ams_data in ams_list:
                 module_type = str(ams_data.get("module_type") or "")
@@ -1451,8 +1452,8 @@ class PrintScheduler:
             if not state:
                 to_remove.append(pid)
                 continue
-            # Check if any AMS unit is still drying
-            ams_list = state.raw_data.get("ams", [])
+            # Check if any AMS unit is still drying (Bambu-only; non-Bambu returns None)
+            ams_list = (state.raw_data or {}).get("ams", [])
             any_drying = any(int(a.get("dry_time") or 0) > 0 for a in ams_list)
             if not any_drying:
                 to_remove.append(pid)
@@ -1466,7 +1467,7 @@ class PrintScheduler:
             self._drying_in_progress.pop(printer_id, None)
             return
 
-        ams_list = state.raw_data.get("ams", [])
+        ams_list = (state.raw_data or {}).get("ams", [])
         for ams_data in ams_list:
             dry_time = int(ams_data.get("dry_time") or 0)
             if dry_time > 0:

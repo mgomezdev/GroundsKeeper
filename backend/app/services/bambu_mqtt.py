@@ -4898,6 +4898,14 @@ class BambuMQTTClient(AbstractPrinterClient):
     def on_forced_offline(self) -> None:
         self.state.state = "unknown"
 
+    @property
+    def is_idle(self) -> bool:
+        return self.state.state in ("IDLE", "FINISH", "FAILED")
+
+    @property
+    def is_printing(self) -> bool:
+        return self.state.state in ("RUNNING", "PAUSE", "PRINTING")
+
     def get_loaded_filaments(self) -> list[dict]:
         """Return AMS trays + external spools in normalized format."""
         raw_data = self.state.raw_data or {}

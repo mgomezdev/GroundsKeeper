@@ -61,6 +61,16 @@ class MoonrakerState:
     # raw is excluded from equality comparison so it doesn't suppress change detection
     raw: dict = field(default_factory=dict, compare=False)
 
+    @property
+    def raw_data(self) -> dict | None:
+        """Compat shim: Bambu code guards on 'if state.raw_data'. Always None here."""
+        return None
+
+    @property
+    def state(self) -> str:
+        """Compat shim: returns print_state for logging and dedup-key use."""
+        return self.print_state
+
 
 class MoonrakerClient(AbstractPrinterClient):
     """Base Moonraker client. Subclass per vendor for any quirks."""
@@ -268,6 +278,14 @@ class MoonrakerClient(AbstractPrinterClient):
 
     def send_gcode(self, gcode: str) -> bool:
         return self._post("/printer/gcode/script", script=gcode) is not None
+
+    @property
+    def is_idle(self) -> bool:
+        return self.state.print_state in ("standby", "complete", "cancelled")
+
+    @property
+    def is_printing(self) -> bool:
+        return self.state.print_state in ("printing", "pausing")
 
     def request_status_update(self) -> bool:
         # Poll thread is continuous; a manual poll on demand is a no-op
