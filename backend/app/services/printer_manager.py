@@ -646,7 +646,17 @@ class PrinterManager:
             finally:
                 client.disconnect()
 
-        # Moonraker-based printers
+        if printer_type == "elegoo_centauri":
+            from backend.app.services.elegoo_centauri_client import ElegooCentauriClient
+            client = ElegooCentauriClient(ip_address=ip_address, port=3030)
+            try:
+                client.connect()
+                await asyncio.sleep(2)
+                return {"success": client.state.connected}
+            finally:
+                client.disconnect()
+
+        # Moonraker-based printers (snapmaker_u1 falls through here — Klipper/Moonraker)
         from backend.app.services.moonraker_client import MoonrakerClient
         return MoonrakerClient.test_connection(ip_address, port=port, api_key=api_key)
 
