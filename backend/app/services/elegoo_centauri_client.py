@@ -531,6 +531,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
     def file_upload_supported(self) -> bool:
         return True
 
+    file_listing_supported = True
+
     def upload_file(self, file_data: bytes, filename: str) -> bool:
         """Upload a file to /local/<filename> via HTTP multipart POST."""
         import hashlib
@@ -562,11 +564,20 @@ class ElegooCentauriClient(AbstractPrinterClient):
             return False
 
     def list_files(self, directory: str = "/local/") -> list[dict]:
-        """Return file list for *directory* via SDCP Cmd 258."""
+        """Return normalized file list for *directory* via SDCP Cmd 258."""
         ok, data = self._send_with_response(_CMD_GET_FILE_LIST, {"Url": directory})
         if not ok:
             return []
-        return data.get("FileList", [])
+        prefix = directory.rstrip("/")
+        return [
+            {
+                "name": f.get("FileName", ""),
+                "size": f.get("FileSize", 0),
+                "path": f"{prefix}/{f.get('FileName', '')}",
+                "is_directory": False,
+            }
+            for f in data.get("FileList", [])
+        ]
 
     def delete_file(self, remote_path: str) -> bool:
         """Delete a single file by its full path via SDCP Cmd 259."""

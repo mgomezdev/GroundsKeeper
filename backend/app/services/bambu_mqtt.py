@@ -4903,3 +4903,40 @@ class BambuMQTTClient(AbstractPrinterClient):
         self._client.publish(self.topic_publish, json.dumps(pushall), qos=1)
         logger.info("[%s] Set liveview %s", self.serial_number, "enabled" if enable else "disabled")
         return True
+
+    # ------------------------------------------------------------------ #
+    # File management (AbstractPrinterClient interface)                    #
+    # ------------------------------------------------------------------ #
+
+    file_listing_supported = True
+
+    def list_files(self, directory: str = "/") -> list[dict]:
+        """List files via FTP. Returns normalized dicts with name/size/path/is_directory."""
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.list_files(directory)
+            finally:
+                ftp.disconnect()
+        return []
+
+    def delete_file(self, remote_path: str) -> bool:
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.delete_file(remote_path)
+            finally:
+                ftp.disconnect()
+        return False
+
+    def storage_info(self) -> dict | None:
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.get_storage_info()
+            finally:
+                ftp.disconnect()
+        return None

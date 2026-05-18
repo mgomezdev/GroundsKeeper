@@ -38,12 +38,9 @@ from backend.app.schemas.printer import (
 )
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
-    delete_file_async,
     download_file_bytes_async,
     download_file_try_paths_async,
     get_cached_3mf,
-    get_storage_info_async,
-    list_files_async,
 )
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -1116,35 +1113,15 @@ async def list_printer_files(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    if printer.printer_type == "elegoo_centauri":
-        client = printer_manager.get_client(printer_id)
-        if not client:
-            raise HTTPException(400, "Printer not connected")
-        directory = path if path.endswith("/") else path + "/"
-        raw = await asyncio.get_event_loop().run_in_executor(None, client.list_files, directory)
-        files = [
-            {
-                "name": f.get("FileName", ""),
-                "size": f.get("FileSize", 0),
-                "path": f"{directory.rstrip('/')}/{f.get('FileName', '')}",
-                "is_dir": False,
-            }
-            for f in raw
-        ]
-        return {"path": path, "files": files}
-
-    if printer.printer_type != "bambu":
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
         raise HTTPException(405, "File management not supported for this printer type")
-    files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
 
-    # Add full path to each file
-    for f in files:
-        f["path"] = f"{path.rstrip('/')}/{f['name']}" if path != "/" else f"/{f['name']}"
-
-    return {
-        "path": path,
-        "files": files,
-    }
+    directory = path if path.endswith("/") else path + "/"
+    files = await asyncio.get_event_loop().run_in_executor(None, client.list_files, directory)
+    return {"path": path, "files": files}
 
 
 @router.get("/{printer_id}/files/download")
@@ -1573,21 +1550,15 @@ async def delete_printer_file(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    if printer.printer_type == "elegoo_centauri":
-        client = printer_manager.get_client(printer_id)
-        if not client:
-            raise HTTPException(400, "Printer not connected")
-        success = await asyncio.get_event_loop().run_in_executor(None, client.delete_file, path)
-        if not success:
-            raise HTTPException(500, f"Failed to delete file: {path}")
-        return {"status": "deleted", "path": path}
-
-    if printer.printer_type != "bambu":
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
         raise HTTPException(405, "File management not supported for this printer type")
-    success = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+
+    success = await asyncio.get_event_loop().run_in_executor(None, client.delete_file, path)
     if not success:
         raise HTTPException(500, f"Failed to delete file: {path}")
-
     return {"status": "deleted", "path": path}
 
 
@@ -1632,12 +1603,15 @@ async def get_printer_storage(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    if printer.printer_type != "bambu":
+
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
         raise HTTPException(405, "File management not supported for this printer type")
 
-    storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
-
-    return storage_info or {"used_bytes": None, "free_bytes": None}
+    info = await asyncio.get_event_loop().run_in_executor(None, client.storage_info)
+    return info or {"used_bytes": None, "free_bytes": None}
 
 
 # ============================================
