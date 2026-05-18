@@ -74,15 +74,19 @@ _CMD_DELETE_FILE = 259            # DELETE_FILE: {"FileList": [...], "FolderList
 _CS_PRINTING = 1
 _CS_COMPLETE = 8
 
-# PrintInfo.Status sub-state codes
-_PS_WARMING_UP = 1
-_PS_PAUSING = 5
-_PS_PAUSED = 6
-_PS_CANCELLED = 8
-_PS_COMPLETE = 9
-_PS_PRINTING = 13
-_PS_CANCELLED_ALT = 14
-_PS_LEVELING = 20
+# PrintInfo.Status → print_state mapping (OctoEverywhere elegoomodels.py GetCurrentStatus)
+# CurrentStatus=[8] (complete) overrides this table; all other states use the table as primary.
+_PRINT_STATE_MAP: dict[int, str] = {
+    0: "standby",
+    1: "warming_up",   # warmup / cancellation warmup
+    5: "pausing",
+    6: "paused",
+    8: "cancelled",
+    9: "complete",
+    13: "printing",
+    14: "cancelled",   # alternate cancelled code
+    20: "leveling",    # bed leveling sub-state
+}
 
 SDCP_PORT = 3030
 _RECONNECT_DELAY = 5.0
@@ -240,21 +244,15 @@ class ElegooCentauriClient(AbstractPrinterClient):
         print_info = status.get("PrintInfo", {})
         ps = print_info.get("Status", 0)
 
-        if _CS_PRINTING in cs:
-            if ps == _PS_PAUSED:
-                s.print_state = "paused"
-            elif ps == _PS_PAUSING:
-                s.print_state = "pausing"
-            elif ps == _PS_WARMING_UP:
-                s.print_state = "warming_up"
-            elif ps == _PS_LEVELING:
-                s.print_state = "leveling"
-            elif ps in (_PS_CANCELLED, _PS_CANCELLED_ALT):
-                s.print_state = "cancelled"
-            else:
-                s.print_state = "printing"
-        elif _CS_COMPLETE in cs:
+        # CurrentStatus=[8] is a definitive printer-level "complete" signal.
+        # Otherwise use PrintInfo.Status as the primary discriminator, with
+        # CurrentStatus=[1] as a fallback for unknown sub-states mid-print.
+        if _CS_COMPLETE in cs:
             s.print_state = "complete"
+        elif ps in _PRINT_STATE_MAP:
+            s.print_state = _PRINT_STATE_MAP[ps]
+        elif _CS_PRINTING in cs:
+            s.print_state = "printing"
         else:
             s.print_state = "standby"
 
@@ -323,7 +321,19 @@ class ElegooCentauriClient(AbstractPrinterClient):
             self._video_url_event.set()
 
     def _parse_error_msg(self, msg: dict) -> None:
-        logger.warning("[%s] SDCP error: %s", self.ip_address, msg)
+        data = msg.get("Data", {})
+        inner = data.get("Data", {})
+        cmd = data.get("Cmd", -1)
+        ack = inner.get("Ack", -1)
+        logger.warning("[%s] SDCP error: cmd=%d ack=%d payload=%s", self.ip_address, cmd, ack, inner)
+        # Unblock any caller waiting on this request so it gets the error ack
+        # instead of timing out (prevents 10-second hangs on printer rejection).
+        request_id = data.get("RequestID", "")
+        event = self._pending_acks.pop(request_id, None)
+        if event is not None:
+            self._ack_results[request_id] = ack
+            self._response_data[request_id] = inner
+            event.set()
 
     def _parse_attr_msg(self, msg: dict) -> None:
         attrs = msg.get("Attributes", {})
