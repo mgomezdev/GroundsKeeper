@@ -583,6 +583,19 @@ class ElegooCentauriClient(AbstractPrinterClient):
         """Delete a single file by its full path via SDCP Cmd 259."""
         return self._send(_CMD_DELETE_FILE, {"FileList": [remote_path], "FolderList": []}, wait_ack=True)
 
+    def get_loaded_filaments(self) -> list[dict]:
+        """Elegoo has a single external spool with unknown filament type."""
+        return [
+            {
+                "type": "",
+                "color": "#808080",
+                "tray_info_idx": "",
+                "tray_sub_brands": "",
+                "extruder_id": None,
+                "is_external": True,
+            }
+        ]
+
     def request_status_update(self) -> bool:
         return self._send(_CMD_GET_STATUS)
 

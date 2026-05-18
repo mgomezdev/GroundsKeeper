@@ -186,66 +186,18 @@ async def get_available_filaments(
     filaments = []
 
     for printer in printers_list:
-        status = printer_manager.get_status(printer.id)
-        if not status:
+        client = printer_manager.get_client(printer.id)
+        if not client:
             continue
-
-        # Get ams_extruder_map for dual-nozzle printers
-        ams_extruder_map = status.raw_data.get("ams_extruder_map", {})
-
-        # AMS trays
-        for ams_unit in status.raw_data.get("ams", []):
-            ams_id = str(ams_unit.get("id", 0))
-            extruder_id = ams_extruder_map.get(ams_id)
-            for tray in ams_unit.get("tray", []):
-                tray_type = tray.get("tray_type")
-                if not tray_type:
-                    continue
-                tray_color = tray.get("tray_color", "")
-                # Normalize color: remove alpha, add hash
-                hex_color = tray_color.replace("#", "")[:6] if tray_color else "808080"
-                color = f"#{hex_color}"
-                tray_info_idx = tray.get("tray_info_idx", "")
-                tray_sub_brands = tray.get("tray_sub_brands", "") or ""
-
-                key = (tray_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
-                if key not in seen:
-                    seen.add(key)
-                    filaments.append(
-                        {
-                            "type": tray_type,
-                            "color": color,
-                            "tray_info_idx": tray_info_idx,
-                            "tray_sub_brands": tray_sub_brands,
-                            "extruder_id": extruder_id,
-                        }
-                    )
-
-        # External spools (vt_tray)
-        for vt in status.raw_data.get("vt_tray") or []:
-            vt_type = vt.get("tray_type")
-            if not vt_type:
-                continue
-            vt_color = vt.get("tray_color", "")
-            hex_color = vt_color.replace("#", "")[:6] if vt_color else "808080"
-            color = f"#{hex_color}"
-            tray_info_idx = vt.get("tray_info_idx", "")
-            tray_sub_brands = vt.get("tray_sub_brands", "") or ""
-            vt_id = int(vt.get("id", 254))
-            extruder_id = (255 - vt_id) if ams_extruder_map else None
-
-            key = (vt_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
+        for f in client.get_loaded_filaments():
+            tray_type = f.get("type", "")
+            hex_color = f.get("color", "#808080").lstrip("#")
+            tray_sub_brands = f.get("tray_sub_brands", "") or ""
+            extruder_id = f.get("extruder_id")
+            key = (tray_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
             if key not in seen:
                 seen.add(key)
-                filaments.append(
-                    {
-                        "type": vt_type,
-                        "color": color,
-                        "tray_info_idx": tray_info_idx,
-                        "tray_sub_brands": tray_sub_brands,
-                        "extruder_id": extruder_id,
-                    }
-                )
+                filaments.append(f)
 
     return filaments
 
