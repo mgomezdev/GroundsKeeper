@@ -1262,6 +1262,9 @@ export interface UnifiedPreset {
   // responses pre-date these fields entirely.
   filament_type?: string | null;
   filament_colour?: string | null;
+  // Populated for process presets — names of printer presets this process is
+  // compatible with. Null means compatible with any printer.
+  compatible_printers?: string[] | null;
 }
 export interface UnifiedPresetsBySlot {
   printer: UnifiedPreset[];

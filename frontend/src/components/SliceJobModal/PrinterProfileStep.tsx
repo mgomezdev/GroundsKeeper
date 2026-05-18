@@ -71,11 +71,20 @@ function PrinterCard({ printer, enabled, draft, presets, onToggle, onUpdateDraft
       ]
     : [];
 
+  // Filter process presets to those compatible with the selected printer preset.
+  // A null compatible_printers means the preset works with any printer.
+  const selectedPrinterName = draft.printer_preset_id;
   const processOptions: PresetOption[] = allPresets
     ? [
-        ...allPresets.standard.process.map((p) => ({ id: p.id, name: p.name })),
-        ...allPresets.local.process.map((p) => ({ id: p.id, name: p.name })),
-        ...allPresets.cloud.process.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.standard.process.filter(
+          (p) => !p.compatible_printers || p.compatible_printers.includes(selectedPrinterName)
+        ).map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.local.process.filter(
+          (p) => !p.compatible_printers || p.compatible_printers.includes(selectedPrinterName)
+        ).map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.cloud.process.filter(
+          (p) => !p.compatible_printers || p.compatible_printers.includes(selectedPrinterName)
+        ).map((p) => ({ id: p.id, name: p.name })),
       ]
     : [];
 
@@ -150,7 +159,7 @@ function PrinterCard({ printer, enabled, draft, presets, onToggle, onUpdateDraft
             label="Printer preset"
             value={draft.printer_preset_id}
             options={printerOptions}
-            onChange={(v) => onUpdateDraft({ printer_preset_id: v })}
+            onChange={(v) => onUpdateDraft({ printer_preset_id: v, process_preset_id: '' })}
           />
           <PresetSelect
             label="Process preset"

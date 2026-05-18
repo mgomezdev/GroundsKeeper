@@ -242,10 +242,13 @@ async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPres
             name = entry.get("name")
             if not name:
                 continue
-            extra: dict[str, str | None] = {}
+            extra: dict = {}
             if slot == "filament":
                 extra["filament_type"] = entry.get("filament_type")
                 extra["filament_colour"] = entry.get("filament_colour")
+            cp = entry.get("compatible_printers")
+            if isinstance(cp, list) and cp:
+                extra["compatible_printers"] = cp
             slots[slot].append(UnifiedPreset(id=name, name=name, source="standard", **extra))
 
     _bundled_cache = (now, slots)

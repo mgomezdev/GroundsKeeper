@@ -38,6 +38,7 @@ class UnifiedPreset(BaseModel):
     source: Literal["cloud", "local", "standard"]
     filament_type: str | None = None
     filament_colour: str | None = None
+    compatible_printers: list[str] | None = None
 
 
 class UnifiedPresetsBySlot(BaseModel):
