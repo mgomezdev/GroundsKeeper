@@ -316,6 +316,7 @@ async def _add_slice_on_dispatch_item(
 
     item = PrintQueueItem(
         slice_config_id=slice_config.id,
+        library_file_id=cfg.library_file_id,
         position=max_pos + 1,
         scheduled_time=data.scheduled_time,
         require_previous_success=data.require_previous_success,

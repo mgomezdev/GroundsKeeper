@@ -19,6 +19,11 @@ interface PrinterCardProps {
   onUpdateDraft: (patch: Partial<PerPrinterDraft>) => void;
 }
 
+interface PresetOption {
+  id: string;
+  name: string;
+}
+
 function PresetSelect({
   label,
   value,
@@ -27,7 +32,7 @@ function PresetSelect({
 }: {
   label: string;
   value: string;
-  options: string[];
+  options: PresetOption[];
   onChange: (v: string) => void;
 }) {
   return (
@@ -41,8 +46,8 @@ function PresetSelect({
         >
           {value === '' && <option value="">— select —</option>}
           {options.map((o) => (
-            <option key={o} value={o}>
-              {o}
+            <option key={o.id} value={o.id}>
+              {o.name}
             </option>
           ))}
         </select>
@@ -58,27 +63,27 @@ function PrinterCard({ printer, enabled, draft, presets, onToggle, onUpdateDraft
     queryFn: api.getSlicerPresets,
   });
 
-  const printerOptions = allPresets
+  const printerOptions: PresetOption[] = allPresets
     ? [
-        ...allPresets.standard.printer.map((p) => p.id),
-        ...allPresets.local.printer.map((p) => p.id),
-        ...allPresets.cloud.printer.map((p) => p.id),
+        ...allPresets.standard.printer.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.local.printer.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.cloud.printer.map((p) => ({ id: p.id, name: p.name })),
       ]
     : [];
 
-  const processOptions = allPresets
+  const processOptions: PresetOption[] = allPresets
     ? [
-        ...allPresets.standard.process.map((p) => p.id),
-        ...allPresets.local.process.map((p) => p.id),
-        ...allPresets.cloud.process.map((p) => p.id),
+        ...allPresets.standard.process.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.local.process.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.cloud.process.map((p) => ({ id: p.id, name: p.name })),
       ]
     : [];
 
-  const filamentOptions = allPresets
+  const filamentOptions: PresetOption[] = allPresets
     ? [
-        ...allPresets.standard.filament.map((p) => p.id),
-        ...allPresets.local.filament.map((p) => p.id),
-        ...allPresets.cloud.filament.map((p) => p.id),
+        ...allPresets.standard.filament.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.local.filament.map((p) => ({ id: p.id, name: p.name })),
+        ...allPresets.cloud.filament.map((p) => ({ id: p.id, name: p.name })),
       ]
     : [];
 
