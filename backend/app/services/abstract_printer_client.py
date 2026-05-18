@@ -104,6 +104,9 @@ class AbstractPrinterClient(ABC):
         """True if this client supports direct file upload via upload_file()."""
         return False
 
+    file_listing_supported: bool = False
+    """True if this client supports listing and deleting printer files."""
+
     def upload_file(self, file_data: bytes, filename: str) -> bool:
         """Upload file bytes to the printer. Returns False by default."""
         return False
@@ -115,3 +118,7 @@ class AbstractPrinterClient(ABC):
     def delete_file(self, remote_path: str) -> bool:
         """Delete a file by path. Returns False by default."""
         return False
+
+    def storage_info(self) -> dict | None:
+        """Return storage usage info or None if unsupported."""
+        return None
