@@ -258,14 +258,11 @@ class PrinterManager:
         try:
             from backend.app.core.websocket import ws_manager
 
-            if isinstance(client, BambuMQTTClient):
-                status_dict = printer_state_to_dict(state, printer_id, self.get_model(printer_id))
-            else:
-                from backend.app.services.elegoo_centauri_client import ElegooState
-                if isinstance(state, ElegooState):
-                    status_dict = _elegoo_state_to_dict(state, printer_id)
-                else:
-                    status_dict = _moonraker_state_to_dict(state, printer_id)
+            serializer = _STATUS_SERIALIZERS.get(client.printer_type)
+            if not serializer:
+                logger.warning("No status serializer for printer_type=%s", client.printer_type)
+                return
+            status_dict = serializer(state, printer_id, self.get_model(printer_id))
 
             await ws_manager.send_printer_status(printer_id, status_dict)
         except Exception as e:
@@ -1101,6 +1098,16 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
     if model:
         result["model"] = model
     return result
+
+
+# Maps printer_type → serializer so _broadcast_status_change never needs isinstance.
+# Adding a new printer type = add one entry here; zero changes to method logic.
+_STATUS_SERIALIZERS = {
+    "bambu": lambda state, printer_id, model: printer_state_to_dict(state, printer_id, model),
+    "elegoo_centauri": lambda state, printer_id, model: _elegoo_state_to_dict(state, printer_id),
+    "moonraker": lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
+    "snapmaker_u1": lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
+}
 
 
 # Global printer manager instance
