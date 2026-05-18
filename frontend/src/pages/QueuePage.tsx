@@ -54,6 +54,7 @@ import {
   GanttChart,
   Code,
   Snail,
+  Scissors,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { type TimeFormat, formatETA, formatDuration, formatRelativeTime, parseUTCDate } from '../utils/date';
@@ -62,6 +63,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PrintModal } from '../components/PrintModal';
+import { SliceJobModal } from '../components/SliceJobModal';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { QueueStatsBar } from '../components/QueueStatsBar';
@@ -487,6 +489,17 @@ function SortableQueueItem({
                 {item.batch_name}
               </span>
             )}
+            {item.eligible_printer_ids && item.eligible_printer_ids.length > 0 && (
+              <span className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] sm:text-xs bg-orange-500/20 text-orange-300 rounded border border-orange-500/30">
+                <Scissors className="w-3 h-3" />
+                Awaiting slice
+              </span>
+            )}
+            {item.slice_error && (
+              <span className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] sm:text-xs bg-red-500/20 text-red-300 rounded border border-red-500/30" title={item.slice_error}>
+                Slice failed
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm text-bambu-gray">
@@ -714,6 +727,7 @@ export function QueuePage() {
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
   const [editItem, setEditItem] = useState<PrintQueueItem | null>(null);
   const [requeueItem, setRequeueItem] = useState<PrintQueueItem | null>(null);
+  const [showSliceJobModal, setShowSliceJobModal] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{
     type: 'cancel' | 'remove' | 'stop';
     item: PrintQueueItem;
@@ -1154,6 +1168,18 @@ export function QueuePage() {
 
         <div className="hidden sm:block flex-1" />
 
+        <Button
+          className="w-full sm:w-auto"
+          variant="secondary"
+          size="sm"
+          onClick={() => setShowSliceJobModal(true)}
+          disabled={!hasPermission('queue:create')}
+          title="Queue a file for slice-then-print"
+        >
+          <Scissors className="w-4 h-4" />
+          Slice &amp; Queue
+        </Button>
+
         {historyItems.length > 0 && (
           <Button
             className="w-full sm:w-auto"
@@ -1436,6 +1462,11 @@ export function QueuePage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Slice Job Modal */}
+      {showSliceJobModal && (
+        <SliceJobModal onClose={() => setShowSliceJobModal(false)} />
       )}
 
       {/* Edit Modal */}

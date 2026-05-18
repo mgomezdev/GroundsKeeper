@@ -2500,6 +2500,13 @@ async def run_migrations(conn):
             llt_n,
         )
 
+    # Migration: Slice-on-dispatch — new tables created by create_all(); add FK columns to print_queue
+    await _safe_execute(
+        conn,
+        "ALTER TABLE print_queue ADD COLUMN slice_config_id INTEGER REFERENCES print_slice_configs(id) ON DELETE SET NULL",
+    )
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN slice_error TEXT")
+
     # Migration: Printer abstraction layer — add printer_type discriminator
     await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN printer_type VARCHAR(20) DEFAULT 'bambu' NOT NULL")
     # Backfill NULL printer_type for rows inserted before the NOT NULL constraint was in place

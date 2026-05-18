@@ -219,6 +219,13 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         "been_jumped": item.been_jumped,
         # Auto-print G-code injection
         "gcode_injection": item.gcode_injection,
+        # Slice-on-dispatch
+        "slice_error": item.slice_error,
+        "eligible_printer_ids": (
+            json.loads(item.slice_config.eligible_printer_ids)
+            if item.slice_config and item.slice_config.eligible_printer_ids
+            else None
+        ),
     }
     response = PrintQueueItemResponse(**item_dict)
     if item.archive:
@@ -273,6 +280,66 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
     return response
 
 
+async def _add_slice_on_dispatch_item(
+    data: "PrintQueueItemCreate",
+    db: AsyncSession,
+    current_user: "User | None",
+) -> PrintQueueItemResponse:
+    """Create a slice-on-dispatch queue item: store PrintSliceConfig, create PrintQueueItem with no archive."""
+    from backend.app.models.print_slice_config import PrintSliceConfig
+
+    cfg = data.slice_config
+    lib_file_result = await db.execute(LibraryFile.active().where(LibraryFile.id == cfg.library_file_id))
+    if not lib_file_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Library file not found")
+
+    # Serialise per_printer_profiles: values may be PerPrinterProfileConfig or raw dicts
+    profiles_serialised: dict[str, dict] = {}
+    for k, v in cfg.per_printer_profiles.items():
+        profiles_serialised[k] = v if isinstance(v, dict) else v.model_dump()
+
+    slice_config = PrintSliceConfig(
+        library_file_id=cfg.library_file_id,
+        plate_index=cfg.plate_index,
+        eligible_printer_ids=json.dumps(cfg.eligible_printer_ids),
+        per_printer_profiles=json.dumps(profiles_serialised),
+    )
+    db.add(slice_config)
+    await db.flush()
+
+    result = await db.execute(
+        select(func.max(PrintQueueItem.position))
+        .where(PrintQueueItem.printer_id.is_(None))
+        .where(PrintQueueItem.status == "pending")
+    )
+    max_pos = result.scalar() or 0
+
+    item = PrintQueueItem(
+        slice_config_id=slice_config.id,
+        position=max_pos + 1,
+        scheduled_time=data.scheduled_time,
+        require_previous_success=data.require_previous_success,
+        auto_off_after=data.auto_off_after,
+        manual_start=data.manual_start,
+        bed_levelling=data.bed_levelling,
+        flow_cali=data.flow_cali,
+        vibration_cali=data.vibration_cali,
+        layer_inspect=data.layer_inspect,
+        timelapse=data.timelapse,
+        use_ams=data.use_ams,
+        gcode_injection=data.gcode_injection,
+        project_id=data.project_id,
+        status="pending",
+        created_by_id=current_user.id if current_user else None,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    await db.refresh(item, ["slice_config", "printer", "archive", "library_file", "created_by", "batch"])
+    logger.info("Added slice-on-dispatch item %d (library_file_id=%d)", item.id, cfg.library_file_id)
+    return _enrich_response(item)
+
+
 @router.get("/", response_model=list[PrintQueueItemResponse])
 async def list_queue(
     printer_id: int | None = Query(None, description="Filter by printer (-1 for unassigned)"),
@@ -292,6 +359,7 @@ async def list_queue(
             selectinload(PrintQueueItem.library_file),
             selectinload(PrintQueueItem.created_by),
             selectinload(PrintQueueItem.batch),
+            selectinload(PrintQueueItem.slice_config),
         )
         .order_by(PrintQueueItem.printer_id.nulls_first(), PrintQueueItem.position)
     )
@@ -349,6 +417,15 @@ async def add_to_queue(
             or normalize_printer_model_id(data.target_model)
             or data.target_model
         )
+
+    # Slice-on-dispatch path: create PrintSliceConfig + queue item with no archive
+    if data.slice_config is not None:
+        if data.archive_id is not None or data.library_file_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either slice_config or archive_id/library_file_id, not both.",
+            )
+        return await _add_slice_on_dispatch_item(data, db, current_user)
 
     # Validate that either archive_id or library_file_id is provided
     if not data.archive_id and not data.library_file_id:
@@ -757,6 +834,7 @@ async def get_queue_item(
             selectinload(PrintQueueItem.library_file),
             selectinload(PrintQueueItem.created_by),
             selectinload(PrintQueueItem.batch),
+            selectinload(PrintQueueItem.slice_config),
         )
         .where(PrintQueueItem.id == item_id)
     )

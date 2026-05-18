@@ -18,6 +18,7 @@ from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
+from backend.app.services.background_dispatch import background_dispatch
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
     delete_file_async,
@@ -198,6 +199,11 @@ class PrintScheduler:
                 # Skip items that require manual start
                 if item.manual_start:
                     skip_reasons["manual_start"] = skip_reasons.get("manual_start", 0) + 1
+                    continue
+
+                # Slice-on-dispatch items: find an idle eligible printer and hand off to background task
+                if item.slice_config_id is not None and item.archive_id is None:
+                    await self._dispatch_slice_item(db, item)
                     continue
 
                 if item.printer_id:
@@ -1595,6 +1601,48 @@ class PrintScheduler:
         """Get printer by ID."""
         result = await db.execute(select(Printer).where(Printer.id == printer_id))
         return result.scalar_one_or_none()
+
+    async def _dispatch_slice_item(self, db: AsyncSession, item: PrintQueueItem) -> bool:
+        """Find an idle eligible printer for a slice-on-dispatch item and hand off.
+
+        Returns True if a printer was found and dispatch was initiated,
+        False if no eligible printer is currently idle (item stays pending).
+        """
+        import json
+
+        from backend.app.models.print_slice_config import PrintSliceConfig
+
+        config = await db.get(PrintSliceConfig, item.slice_config_id)
+        if config is None:
+            logger.warning(
+                "slice_config_id %d not found for queue item %d — marking failed",
+                item.slice_config_id,
+                item.id,
+            )
+            item.status = "failed"
+            item.slice_error = "Slice config missing"
+            await db.commit()
+            return False
+
+        eligible_ids: list[int] = json.loads(config.eligible_printer_ids)
+        chosen_printer = None
+        for printer_id in eligible_ids:
+            if self._is_printer_idle(printer_id):
+                chosen_printer_id = printer_id
+                chosen_printer = True
+                break
+
+        if chosen_printer is None:
+            item.waiting_reason = "No eligible printer available"
+            await db.commit()
+            return False
+
+        item.printer_id = chosen_printer_id
+        item.waiting_reason = None
+        await db.commit()
+
+        background_dispatch.enqueue_slice_and_print(item_id=item.id)
+        return True
 
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.

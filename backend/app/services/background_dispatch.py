@@ -31,7 +31,9 @@ from backend.app.services.bambu_ftp import (
     upload_file_async,
     with_ftp_retry,
 )
+from backend.app.services.preset_resolver import resolve_preset_ref
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 
 logger = logging.getLogger(__name__)
 
@@ -1068,6 +1070,187 @@ class BackgroundDispatchService:
     def _is_sliced_file(filename: str) -> bool:
         lower = filename.lower()
         return lower.endswith(".gcode") or lower.endswith(".gcode.3mf")
+
+    def enqueue_slice_and_print(self, *, item_id: int) -> None:
+        """Schedule _run_slice_and_print as a background asyncio task."""
+        asyncio.create_task(
+            self._run_slice_and_print(item_id=item_id),
+            name=f"slice-and-print-{item_id}",
+        )
+
+    async def _run_slice_and_print(self, *, item_id: int) -> None:
+        """Slice a raw library file then dispatch the result to the assigned printer.
+
+        On slice failure: marks item status=failed, sets slice_error.
+        On success: creates PrintArchive, clears slice_config_id, dispatches normally.
+        """
+        import hashlib
+        import json
+        import uuid
+        from datetime import datetime, timezone
+
+        from backend.app.api.routes.settings import get_setting
+        from backend.app.models.archive import PrintArchive
+        from backend.app.models.print_queue import PrintQueueItem
+        from backend.app.models.print_slice_config import PrintSliceConfig
+        from backend.app.models.user import User
+        from backend.app.schemas.slicer import PresetRef
+        from backend.app.services.archive import ThreeMFParser
+        async with async_session() as db:
+            item: PrintQueueItem | None = await db.get(PrintQueueItem, item_id)
+            if item is None:
+                logger.warning("_run_slice_and_print: item %d not found", item_id)
+                return
+
+            config: PrintSliceConfig | None = await db.get(PrintSliceConfig, item.slice_config_id)
+            if config is None:
+                item.status = "failed"
+                item.slice_error = "Slice config missing at dispatch time"
+                await db.commit()
+                return
+
+            lib_file: LibraryFile | None = await db.get(LibraryFile, config.library_file_id)
+            if lib_file is None:
+                item.status = "failed"
+                item.slice_error = "Source library file was deleted before slicing"
+                await db.commit()
+                return
+
+            profiles_raw = json.loads(config.per_printer_profiles)
+            printer_key = str(item.printer_id)
+            if printer_key not in profiles_raw:
+                item.status = "failed"
+                item.slice_error = f"No profile config for printer {item.printer_id} in slice config"
+                await db.commit()
+                return
+
+            pc = profiles_raw[printer_key]
+
+            user: User | None = None
+            if item.created_by_id is not None:
+                user = await db.get(User, item.created_by_id)
+
+            try:
+                printer_json = await resolve_preset_ref(
+                    db, user, PresetRef(**pc["printer_preset"]), "printer"
+                )
+                process_json = await resolve_preset_ref(
+                    db, user, PresetRef(**pc["process_preset"]), "process"
+                )
+                filament_slots: dict[str, dict] = pc["filament_presets"]
+                filament_jsons = [
+                    await resolve_preset_ref(db, user, PresetRef(**filament_slots[k]), "filament")
+                    for k in sorted(filament_slots.keys(), key=int)
+                ]
+            except Exception as exc:
+                item.status = "failed"
+                item.slice_error = f"Profile resolution failed: {exc}"
+                await db.commit()
+                return
+
+            file_path = Path(settings.base_dir) / lib_file.file_path
+            if not file_path.exists():
+                item.status = "failed"
+                item.slice_error = "Library file not found on disk"
+                await db.commit()
+                return
+
+            try:
+                model_bytes = file_path.read_bytes()
+            except Exception as exc:
+                item.status = "failed"
+                item.slice_error = f"Failed to read library file: {exc}"
+                await db.commit()
+                return
+
+            preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
+            if preferred != "orcaslicer":
+                item.status = "failed"
+                item.slice_error = "OrcaSlicer sidecar not configured (preferred_slicer must be orcaslicer)"
+                await db.commit()
+                return
+            configured_url = await get_setting(db, "orcaslicer_api_url")
+            api_url = (configured_url or settings.slicer_api_url or "").strip()
+            if not api_url:
+                item.status = "failed"
+                item.slice_error = "OrcaSlicer API URL not set (configure it in Settings → Slicer, or set SLICER_API_URL env var)"
+                await db.commit()
+                return
+
+            try:
+                async with SlicerApiService(base_url=api_url) as slicer:
+                    result = await slicer.slice_with_profiles(
+                        model_bytes=model_bytes,
+                        model_filename=lib_file.filename,
+                        printer_profile_json=printer_json,
+                        process_profile_json=process_json,
+                        filament_profile_jsons=filament_jsons,
+                        plate=config.plate_index,
+                        export_3mf=True,
+                    )
+            except SlicerApiError as exc:
+                item.status = "failed"
+                item.slice_error = str(exc)
+                await db.commit()
+                return
+            except Exception as exc:
+                item.status = "failed"
+                item.slice_error = f"Unexpected slicer error: {exc}"
+                await db.commit()
+                return
+
+            # Store the sliced result as a PrintArchive
+            base_name = lib_file.filename.rsplit(".", 1)[0]
+            out_filename = f"{base_name}_sliced.gcode.3mf"
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            printer_folder = str(item.printer_id) if item.printer_id is not None else "unassigned"
+            archive_subdir = f"{timestamp}_{base_name}_sliced"
+            archive_dir = settings.archive_dir / printer_folder / archive_subdir
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            out_path = archive_dir / out_filename
+            out_path.write_bytes(result.content)
+
+            thumbnail_path: str | None = None
+            try:
+                parser = ThreeMFParser(str(out_path))
+                parsed = parser.parse()
+                thumb_data = parsed.get("_thumbnail_data")
+                thumb_ext = parsed.get("_thumbnail_ext", ".png")
+                if thumb_data:
+                    thumb_dest = archive_dir / f"thumbnail{thumb_ext}"
+                    thumb_dest.write_bytes(thumb_data)
+                    thumbnail_path = str(thumb_dest.relative_to(settings.base_dir))
+            except Exception:
+                pass
+
+            archive = PrintArchive(
+                printer_id=item.printer_id,
+                filename=out_filename,
+                file_path=str(out_path.relative_to(settings.base_dir)),
+                file_size=len(result.content),
+                content_hash=hashlib.sha256(result.content).hexdigest(),
+                thumbnail_path=thumbnail_path,
+                print_name=f"{base_name} (auto-sliced)",
+                print_time_seconds=result.print_time_seconds,
+                filament_used_grams=result.filament_used_g or None,
+                created_by_id=item.created_by_id,
+            )
+            db.add(archive)
+            await db.flush()
+
+            item.archive_id = archive.id
+            item.slice_config_id = None
+            item.print_time_seconds = result.print_time_seconds
+            await db.commit()
+            logger.info(
+                "slice-and-print item %d: sliced successfully → archive %d, handing off to scheduler",
+                item_id,
+                archive.id,
+            )
+
+        # The item now has archive_id set and slice_config_id=None.
+        # The scheduler will pick it up on the next 30-second tick as a
+        # regular archive-backed queue item.
 
 
 background_dispatch = BackgroundDispatchService()

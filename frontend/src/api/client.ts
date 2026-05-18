@@ -1662,6 +1662,50 @@ export interface DiscoveredTasmotaDevice {
   discovered_at: string | null;
 }
 
+// Slicer preset types
+export interface PresetRef {
+  source: 'cloud' | 'local' | 'standard';
+  id: string;
+}
+
+export interface PerPrinterProfileConfig {
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+}
+
+export interface PrintSliceConfigCreate {
+  library_file_id: number;
+  plate_index?: number | null;
+  eligible_printer_ids: number[];
+  per_printer_profiles: Record<string, PerPrinterProfileConfig>;
+}
+
+export interface PrinterProfilePreset {
+  id: number;
+  printer_id: number;
+  name: string;
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrinterProfilePresetCreate {
+  name: string;
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+}
+
+export interface PrinterProfilePresetUpdate {
+  name?: string;
+  printer_preset?: PresetRef;
+  process_preset?: PresetRef;
+  filament_presets?: Record<string, PresetRef>;
+}
+
 // Print Queue types
 export interface PrintQueueItem {
   id: number;
@@ -1710,6 +1754,9 @@ export interface PrintQueueItem {
   been_jumped?: boolean;
   // Auto-print G-code injection
   gcode_injection?: boolean;
+  // Slice-on-dispatch fields
+  slice_error?: string | null;
+  eligible_printer_ids?: number[] | null;
 }
 
 export interface PrintBatch {
@@ -1753,6 +1800,8 @@ export interface PrintQueueItemCreate {
   gcode_injection?: boolean;
   // Batch: create multiple copies (creates a batch if > 1)
   quantity?: number;
+  // Slice-on-dispatch: mutually exclusive with archive_id/library_file_id
+  slice_config?: PrintSliceConfigCreate | null;
   // Project to associate the resulting archive with
   project_id?: number;
 }
@@ -4374,6 +4423,22 @@ export const api = {
     request<{ success: boolean; message: string }>(`/printers/${printerId}/kprofiles/notes/${encodeURIComponent(settingId)}`, {
       method: 'DELETE',
     }),
+
+  // Printer Profile Presets (slicer profiles saved per printer)
+  getProfilePresets: (printerId: number) =>
+    request<PrinterProfilePreset[]>(`/printers/${printerId}/profile-presets`),
+  createProfilePreset: (printerId: number, data: PrinterProfilePresetCreate) =>
+    request<PrinterProfilePreset>(`/printers/${printerId}/profile-presets`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateProfilePreset: (printerId: number, presetId: number, data: PrinterProfilePresetUpdate) =>
+    request<PrinterProfilePreset>(`/printers/${printerId}/profile-presets/${presetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteProfilePreset: (printerId: number, presetId: number) =>
+    request<void>(`/printers/${printerId}/profile-presets/${presetId}`, { method: 'DELETE' }),
 
   // Slot Preset Mappings
   getSlotPresets: (printerId: number) =>
