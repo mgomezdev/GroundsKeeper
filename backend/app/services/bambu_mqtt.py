@@ -4904,6 +4904,49 @@ class BambuMQTTClient(AbstractPrinterClient):
         logger.info("[%s] Set liveview %s", self.serial_number, "enabled" if enable else "disabled")
         return True
 
+    def get_loaded_filaments(self) -> list[dict]:
+        """Return AMS trays + external spools in normalized format."""
+        raw_data = self.state.raw_data or {}
+        ams_extruder_map = raw_data.get("ams_extruder_map", {})
+        filaments = []
+
+        for ams_unit in raw_data.get("ams", []):
+            ams_id = str(ams_unit.get("id", 0))
+            extruder_id = ams_extruder_map.get(ams_id)
+            for tray in ams_unit.get("tray", []):
+                tray_type = tray.get("tray_type")
+                if not tray_type:
+                    continue
+                tray_color = tray.get("tray_color", "")
+                hex_color = tray_color.replace("#", "")[:6] if tray_color else "808080"
+                filaments.append({
+                    "type": tray_type,
+                    "color": f"#{hex_color}",
+                    "tray_info_idx": tray.get("tray_info_idx", ""),
+                    "tray_sub_brands": tray.get("tray_sub_brands", "") or "",
+                    "extruder_id": extruder_id,
+                    "is_external": False,
+                })
+
+        for vt in raw_data.get("vt_tray") or []:
+            vt_type = vt.get("tray_type")
+            if not vt_type:
+                continue
+            vt_color = vt.get("tray_color", "")
+            hex_color = vt_color.replace("#", "")[:6] if vt_color else "808080"
+            vt_id = int(vt.get("id", 254))
+            extruder_id = (255 - vt_id) if ams_extruder_map else None
+            filaments.append({
+                "type": vt_type,
+                "color": f"#{hex_color}",
+                "tray_info_idx": vt.get("tray_info_idx", ""),
+                "tray_sub_brands": vt.get("tray_sub_brands", "") or "",
+                "extruder_id": extruder_id,
+                "is_external": True,
+            })
+
+        return filaments
+
     # ------------------------------------------------------------------ #
     # File management (AbstractPrinterClient interface)                    #
     # ------------------------------------------------------------------ #

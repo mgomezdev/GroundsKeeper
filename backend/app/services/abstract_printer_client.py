@@ -122,3 +122,7 @@ class AbstractPrinterClient(ABC):
     def storage_info(self) -> dict | None:
         """Return storage usage info or None if unsupported."""
         return None
+
+    def get_loaded_filaments(self) -> list[dict]:
+        """Return loaded filaments in normalized format. Empty list means unknown."""
+        return []
