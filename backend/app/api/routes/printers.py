@@ -1133,6 +1133,8 @@ async def list_printer_files(
         ]
         return {"path": path, "files": files}
 
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
     files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
 
     # Add full path to each file
@@ -1157,6 +1159,8 @@ async def download_printer_file(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File download not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1201,6 +1205,8 @@ async def get_printer_file_gcode(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1243,6 +1249,8 @@ async def get_printer_file_plates(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     filename = path.split("/")[-1]
     if not filename.lower().endswith(".3mf"):
@@ -1484,6 +1492,8 @@ async def get_printer_file_plate_thumbnail(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1519,6 +1529,8 @@ async def download_printer_files_as_zip(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -1570,6 +1582,8 @@ async def delete_printer_file(
             raise HTTPException(500, f"Failed to delete file: {path}")
         return {"status": "deleted", "path": path}
 
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
     success = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if not success:
         raise HTTPException(500, f"Failed to delete file: {path}")
@@ -1618,6 +1632,8 @@ async def get_printer_storage(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
 
