@@ -44,6 +44,23 @@ class StartPrintOptions:
     use_ams: bool = True
 
 
+@dataclass
+class ConnectionField:
+    """Describes one connection credential or parameter a printer type requires.
+
+    Used by the add-printer UI to render a type-specific form without
+    hardcoding field names in the frontend.
+    """
+
+    name: str           # API payload key, e.g. "serial_number"
+    label: str          # Display label, e.g. "Serial Number"
+    field_type: str     # "text" | "password" | "number"
+    required: bool = True
+    default: str | int | None = None
+    placeholder: str = ""
+    help_text: str = ""
+
+
 class AbstractPrinterClient(ABC):
     """Vendor-agnostic interface for all printer client implementations.
 
@@ -55,6 +72,16 @@ class AbstractPrinterClient(ABC):
     """
 
     printer_type: ClassVar[str]
+
+    @classmethod
+    def connection_fields(cls) -> list["ConnectionField"]:
+        """Return ordered list of fields this printer type needs to connect.
+
+        Each concrete client overrides this to advertise its own credentials.
+        The add-printer UI calls GET /api/v1/printers/types (which reads these)
+        to render the connection form dynamically.
+        """
+        return []
 
     # ------------------------------------------------------------------ #
     # Connection lifecycle                                                  #
