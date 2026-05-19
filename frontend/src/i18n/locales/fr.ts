@@ -1,9 +1,9 @@
-export default {
+﻿export default {
   // Navigation
   nav: {
     printers: 'Imprimantes',
     archives: 'Archives',
-    queue: 'File d\'attente',
+    queue: 'File d\'attente d\'impression',
     stats: 'Statistiques',
     profiles: 'Profils',
     maintenance: 'Maintenance',
@@ -186,8 +186,8 @@ export default {
       allLocations: 'Tous les emplacements',
     },
     toolbar: {
-      filters: 'Filters',
-      view: 'View',
+      filters: 'Filtres',
+      view: 'Vue',
       actions: 'Actions',
     },
     // Printer card
@@ -819,6 +819,7 @@ export default {
       deleteArchive: 'Supprimer l\'archive',
       deleteConfirm: 'Supprimer "{{name}}" ? Cette action est irréversible.',
       deleteButton: 'Supprimer',
+      deletePurgeStats: 'Also remove this print from Quick Stats (filament, time, cost, energy)',
       removeSource3mf: 'Retirer Source 3MF',
       removeSource3mfConfirm: 'Retirer le fichier 3MF de "{{name}}" ?',
       removeButton: 'Retirer',
@@ -1141,7 +1142,7 @@ export default {
 
   // Statistics page
   stats: {
-    title: 'Tableau de bord',
+    title: 'Statistiques',
     subtitle: 'Glissez les widgets pour réorganiser. Cliquez sur l\'œil pour masquer.',
     overview: 'Vue d\'ensemble',
     totalPrints: 'Total impressions',
@@ -1396,7 +1397,7 @@ export default {
       disabled: 'Authentification LDAP désactivée',
       feature1: 'Les utilisateurs peuvent se connecter avec leurs identifiants LDAP',
       feature2: "Le compte administrateur local reste disponible en secours",
-      feature3: 'Les groupes LDAP sont associés aux groupes BamBuddy à la connexion',
+      feature3: 'Les groupes LDAP sont associés aux groupes GroundsKeeper à la connexion',
       serverConfig: 'Configuration du serveur LDAP',
       serverUrl: 'URL du serveur',
       serverUrlHint: 'Utilisez ldap:// pour standard ou ldaps:// pour les connexions SSL',
@@ -1407,13 +1408,14 @@ export default {
       searchBase: 'DN de base de recherche',
       userFilter: 'Filtre de recherche utilisateur',
       userFilterHint: "{username} est remplacé par le nom d'utilisateur. Utilisez (uid={username}) pour OpenLDAP.",
+      advanced: 'Avancé',
       autoProvision: 'Provisionnement automatique',
-      autoProvisionHint: 'Créer automatiquement un compte BamBuddy lors de la première connexion LDAP',
+      autoProvisionHint: 'Créer automatiquement un compte GroundsKeeper lors de la première connexion LDAP',
       defaultGroup: 'Groupe par défaut',
       defaultGroupNone: '— Aucun (pas de repli) —',
       defaultGroupHint: "Groupe de repli attribué lorsqu'un utilisateur LDAP s'authentifie mais n'est dans aucun groupe LDAP mappé. Laissez vide pour laisser les utilisateurs non mappés sans autorisations.",
       groupMapping: 'Mappage de groupes (JSON)',
-      groupMappingHint: 'Associer les DN de groupes LDAP aux groupes BamBuddy. Groupes disponibles : ',
+      groupMappingHint: 'Associer les DN de groupes LDAP aux groupes GroundsKeeper. Groupes disponibles : ',
       testConnection: 'Tester la connexion',
       settingsSaved: 'Paramètres LDAP enregistrés',
       errors: {
@@ -1494,7 +1496,7 @@ export default {
     autoUpdate: 'Mise à jour auto',
     currentVersion: 'Version actuelle',
     latestVersion: 'Dernière version',
-    upToDate: 'Bambuddy est à jour',
+    upToDate: 'GroundsKeeper est à jour',
     updateAvailable: 'Mise à jour disponible',
     // Notifications
     notificationLanguage: 'Langue des notifications',
@@ -1693,6 +1695,9 @@ export default {
     cloudAccess: 'Allow cloud access',
     cloudAccessDescription: 'Read Bambu Cloud presets and filaments on your behalf. Requires you to be signed into Bambu Cloud.',
     cloudBadge: 'Cloud',
+    updateEnergyCost: 'Update electricity price',
+    updateEnergyCostDescription: 'Allow this key to POST a new per-kWh electricity price to /settings/electricity-price. Useful for Home Assistant dynamic-tariff automations (Tibber, Octopus, etc.). This is the only settings field writable via API key.',
+    energyCostBadge: 'Energy',
     legacyKey: 'Legacy',
     legacyKeyTooltip: 'Created before per-user ownership; recreate to use cloud access',
     unnamedKey: 'Clé sans nom',
@@ -1795,7 +1800,8 @@ export default {
     username: 'Nom d\'utilisateur',
     enterUsername: 'Entrez l\'utilisateur',
     password: 'Mot de passe',
-    enterPassword: 'Mot de passe (min 6 char)',
+    enterPassword: 'Entrez le mot de passe',
+    passwordRequirements: 'Au moins 8 caractères, avec une majuscule, une minuscule, un chiffre et un caractère spécial.',
     confirmPassword: 'Confirmer le mot de passe',
     confirmPasswordPlaceholder: 'Confirmez le mot de passe',
     // Title tooltips
@@ -1819,7 +1825,7 @@ export default {
     disableAuthenticationMessage: 'Instance accessible sans connexion. Les comptes sont conservés.',
     disableAuthentication: 'Désactiver',
     // Additional settings
-    configureBambuddy: 'Configurer Bambuddy',
+    configureGroundsKeeper: 'Configurer GroundsKeeper',
     systemDefault: 'Défaut système',
     archiveSettings: 'Réglages Archives',
     newWindow: 'Nouvelle fenêtre',
@@ -1899,7 +1905,11 @@ export default {
       groupDeleted: 'Groupe supprimé',
       fillRequiredFields: 'Remplissez les champs requis',
       passwordsDoNotMatch: 'Les mots de passe ne correspondent pas',
-      passwordTooShort: 'Minimum 6 caractères',
+      passwordTooShort: 'Le mot de passe doit contenir au moins 8 caractères',
+      passwordNeedsUppercase: 'Le mot de passe doit contenir au moins une majuscule',
+      passwordNeedsLowercase: 'Le mot de passe doit contenir au moins une minuscule',
+      passwordNeedsDigit: 'Le mot de passe doit contenir au moins un chiffre',
+      passwordNeedsSpecial: 'Le mot de passe doit contenir au moins un caractère spécial',
       enterGroupName: 'Entrez un nom de groupe',
       settingsSaved: 'Paramètres enregistrés',
       noPermissionUpdate: "Vous n'avez pas l'autorisation de modifier les paramètres",
@@ -2063,7 +2073,7 @@ export default {
     cameraTypeUsb: 'Caméra USB (V4L2)',
     cameraSnapshotUrl: 'Snapshot URL (optional)',
     cameraSnapshotUrlPlaceholder: 'http://192.168.1.61:1984/api/frame.jpeg?src=printer',
-    cameraSnapshotUrlHelp: 'Single-frame URL used for notification thumbnails, finish photos, timelapse and plate detection. Leave blank to capture from the live stream above. Useful for go2rtc (/api/frame.jpeg) and IP cameras with a dedicated snapshot endpoint.',
+    cameraSnapshotUrlHelp: 'Single-frame URL used for notification thumbnails, finish photos, layer-timelapse frames, and plate detection. Timelapse and plate detection each require their own per-printer toggle — this URL is just the image source they pull from when active. Leave blank to capture from the live stream above. Useful for go2rtc (/api/frame.jpeg) and IP cameras with a dedicated snapshot endpoint.',
     cameraRotation: 'Rotation',
     test: 'Tester',
     connected: 'Connecté',
@@ -2081,13 +2091,13 @@ export default {
     lowDiskSpaceDescription: 'Afficher un avertissement lorsque l\'espace disque libre descend sous ce seuil',
     printerFirmware: 'Firmware imprimante',
     checkFirmwareDescription: 'Vérifier les mises à jour firmware de Bambu Lab',
-    bambuddySoftware: 'Logiciel Bambuddy',
+    bambuddySoftware: 'Logiciel GroundsKeeper',
     autoCheckDescription: 'Vérifier automatiquement les nouvelles versions au démarrage',
     checkNow: 'Vérifier maintenant',
     updateAvailableVersion: 'Mise à jour disponible : v{{version}}',
     releaseNotes: 'Notes de version',
     updateViaDocker: 'Mettre à jour via Docker Compose :',
-    updateViaHomeAssistant: 'Les mises à jour sont gérées par le superviseur Home Assistant. Ouvrez Paramètres → Modules complémentaires → Bambuddy dans Home Assistant pour installer la nouvelle version.',
+    updateViaHomeAssistant: 'Les mises à jour sont gérées par le superviseur Home Assistant. Ouvrez Paramètres → Modules complémentaires → GroundsKeeper dans Home Assistant pour installer la nouvelle version.',
     installUpdate: 'Installer la mise à jour',
     latestVersionRunning: 'Vous utilisez la dernière version',
     failedToCheckUpdates: 'Échec de la vérification des mises à jour : {{error}}',
@@ -2095,8 +2105,8 @@ export default {
     backupRestoreDescription: 'Exporter/importer les paramètres et configurer la sauvegarde GitHub',
     goToBackup: 'Aller à la sauvegarde',
     externalUrl: 'URL externe',
-    externalUrlDescription: 'L\'URL externe où Bambuddy est accessible. Utilisée pour les images de notification et les intégrations externes.',
-    bambuddyUrl: 'URL Bambuddy',
+    externalUrlDescription: 'L\'URL externe où GroundsKeeper est accessible. Utilisée pour les images de notification et les intégrations externes.',
+    bambuddyUrl: 'URL GroundsKeeper',
     externalUrlHint: 'Inclure le protocole et le port (ex : http://192.168.1.100:8000)',
     ftpRetry: 'Réessai FTP',
     ftpRetryDescription: 'Réessayer les opérations FTP lorsque le WiFi de l\'imprimante est instable. S\'applique aux téléchargements 3MF, uploads d\'impression, téléchargements timelapse et mises à jour firmware.',
@@ -2120,7 +2130,7 @@ export default {
     haConnectionSuccess: 'Connexion à Home Assistant réussie.',
     haConnectionFailed: 'Échec de la connexion à Home Assistant.',
     mqttPublishing: 'Publication MQTT',
-    mqttDescription: 'Publier les événements BamBuddy vers un broker MQTT externe pour l\'intégration avec Node-RED, Home Assistant et d\'autres systèmes d\'automatisation.',
+    mqttDescription: 'Publier les événements GroundsKeeper vers un broker MQTT externe pour l\'intégration avec Node-RED, Home Assistant et d\'autres systèmes d\'automatisation.',
     mqttEnableDescription: 'Publier les événements vers un broker MQTT externe',
     brokerHostname: 'Nom d\'hôte du broker',
     port: 'Port',
@@ -2208,6 +2218,11 @@ export default {
       created: 'Fournisseur créé.',
       updated: 'Fournisseur mis à jour.',
       deleted: 'Fournisseur supprimé.',
+      refreshIcon: 'Actualiser l\'icône',
+      removeIcon: 'Supprimer l\'icône',
+      iconRefreshed: 'Icône actualisée.',
+      iconRemoved: 'Icône supprimée.',
+      iconFetchFailed: 'Impossible de récupérer l\'icône depuis l\'URL du fournisseur.',
       deleteTitle: 'Supprimer le fournisseur',
       deleteMessage: 'Supprimer "{{name}}" ? Tous les comptes liés seront déconnectés.',
       form: {
@@ -2245,7 +2260,7 @@ export default {
       enabledFromFile: 'At-rest encryption enabled (key loaded from data directory)',
       enabledGenerated: 'At-rest encryption enabled with auto-generated key',
       notConfigured: 'At-rest encryption not configured',
-      notConfiguredDesc: 'TOTP secrets and OIDC client_secrets are stored in plaintext. Set MFA_ENCRYPTION_KEY or restart Bambuddy with a writable data directory to auto-generate one.',
+      notConfiguredDesc: 'TOTP secrets and OIDC client_secrets are stored in plaintext. Set MFA_ENCRYPTION_KEY or restart GroundsKeeper with a writable data directory to auto-generate one.',
       allEncrypted: 'All MFA secrets are encrypted at rest.',
       legacyRowsLabel: 'Legacy plaintext rows',
       encryptedRowsLabel: 'Encrypted rows',
@@ -2253,7 +2268,7 @@ export default {
       backupHint: 'The auto-generated key is stored at DATA_DIR/.mfa_encryption_key and is included in local backup ZIPs. Keep your backups secure or set MFA_ENCRYPTION_KEY explicitly.',
       decryptionBrokenTitle: 'Encryption key missing',
       decryptionBrokenError: '{{count}} encrypted record(s) cannot be decrypted because the encryption key is no longer available. Restore the previous MFA_ENCRYPTION_KEY or DATA_DIR/.mfa_encryption_key to recover.',
-      migrationErrorWarning: "{{count}} ligne(s) ancienne(s) n'ont pas pu être rechiffrée(s) au démarrage. Vérifiez les journaux du serveur et redémarrez Bambuddy pour réessayer.",
+      migrationErrorWarning: "{{count}} ligne(s) ancienne(s) n'ont pas pu être rechiffrée(s) au démarrage. Vérifiez les journaux du serveur et redémarrez GroundsKeeper pour réessayer.",
     },
 
 
@@ -2416,7 +2431,7 @@ export default {
 
   // Login page
   login: {
-    title: 'Connexion Bambuddy',
+    title: 'Connexion GroundsKeeper',
     subtitle: 'Connectez-vous à votre compte',
     username: 'Utilisateur',
     usernamePlaceholder: 'Entrez votre utilisateur',
@@ -2462,7 +2477,7 @@ export default {
     sending: 'Envoi...',
     sendResetEmail: 'Envoyer l\'email',
     howToReset: 'Comment réinitialiser :',
-    resetStep1: 'Contactez votre admin Bambuddy',
+    resetStep1: 'Contactez votre admin GroundsKeeper',
     resetStep2: 'Demandez une réinitialisation dans la Gestion Utilisateurs',
     resetStep3: 'Il vous donnera un mot de passe temporaire',
     resetStep4: 'Connectez-vous et changez-le dans les Paramètres',
@@ -2473,7 +2488,7 @@ export default {
       methodAuthenticator: "Application d'authentification",
       methodEmail: 'Code par e-mail',
       methodBackup: 'Code de récupération',
-      instructionsTotp: "Ouvrez votre application d'authentification et saisissez le code à 6 chiffres pour Bambuddy.",
+      instructionsTotp: "Ouvrez votre application d'authentification et saisissez le code à 6 chiffres pour GroundsKeeper.",
       instructionsEmail: 'Un code à 6 chiffres a été envoyé à votre adresse e-mail. Il est valable 10 minutes.',
       instructionsEmailNotSent: 'Cliquez ci-dessous pour recevoir un code de vérification par e-mail.',
       instructionsBackup: "Saisissez l'un de vos codes de récupération à 8 caractères. Chaque code ne peut être utilisé qu'une seule fois.",
@@ -2512,7 +2527,7 @@ export default {
 
   // Setup page
   setup: {
-    title: 'Configuration Bambuddy',
+    title: 'Configuration GroundsKeeper',
     subtitle: 'Configurez l\'authentification',
     enableAuth: 'Activer l\'authentification',
     adminAccount: 'Compte Admin',
@@ -2643,7 +2658,7 @@ export default {
   // Users management
   users: {
     title: 'Gestion des Utilisateurs',
-    subtitle: 'Gérez les accès à Bambuddy',
+    subtitle: 'Gérez les accès à GroundsKeeper',
     backToSettings: 'Retour aux paramètres',
     createUser: 'Créer un utilisateur',
     noPermission: 'Accès refusé.',
@@ -2668,6 +2683,7 @@ export default {
       fillRequired: 'Remplissez les champs requis',
       passwordsDoNotMatch: 'Les mots de passe ne correspondent pas',
       passwordTooShort: 'Minimum 6 caractères',
+      ldapProvisioned: 'Provisioned LDAP user "{{username}}"',
     },
     modal: {
       createUser: 'Créer utilisateur',
@@ -2677,6 +2693,22 @@ export default {
       saving: 'Enregistrement...',
       saveChanges: 'Enregistrer',
       advancedAuthSubtitle: 'avec Authentification Avancée',
+      // Manual LDAP provisioning (#1298) — English fallbacks
+      tabsAriaLabel: 'User source',
+      localTab: 'Local',
+      ldapTab: 'LDAP',
+      ldapSearchLabel: 'Search directory',
+      ldapSearchPlaceholder: 'Type a username, name, or email...',
+      ldapMinChars: 'Type at least 2 characters to search',
+      ldapTypeToSearch: 'Start typing to search the LDAP directory',
+      ldapSearching: 'Searching directory...',
+      ldapNoResults: 'No matching users in the directory',
+      ldapSearchError: 'Directory search failed. Check the LDAP server status.',
+      ldapAlreadyProvisioned: 'Already provisioned',
+      ldapSelectedLabel: 'Selected',
+      ldapProvision: 'Provision user',
+      ldapProvisioning: 'Provisioning...',
+      ldapErrorProvision: 'Provisioning failed. Check the LDAP server status and try again.',
     },
     form: {
       username: 'Utilisateur',
@@ -3348,7 +3380,7 @@ export default {
     previewToast: 'Analyzing {{name}} — {{elapsed}}',
     previewWithProgress: 'Analyzing {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     notUsedByPlate: '— not used by this plate',
-    printerMismatch: 'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in Bambu Studio, change the printer, and re-export.',
+    printerMismatch: 'This 3MF was sliced for {{source}}, but you picked {{target}}. The slicer CLI cannot re-slice a 3MF for a different printer — open the source in OrcaSlicer or BambuStudio, switch to the correct printer, and re-export.',
     noPresetsForSlot: 'No presets available',
     presetsLoadFailed: 'Failed to load presets. Open Settings → Profiles to import them first.',
     allPresetsRequired: 'All presets must be selected',
@@ -3370,6 +3402,16 @@ export default {
       notAuthenticated: 'Sign in to Bambu Cloud (Settings → Profiles → Cloud) to see your cloud presets.',
       expired: 'Bambu Cloud session expired — sign in again to refresh your cloud presets.',
       unreachable: 'Bambu Cloud is unreachable right now. Local and standard presets still work.',
+    },
+    bedType: {
+      label: 'Build plate',
+      auto: 'Auto (use process preset)',
+      coolPlate: 'Cool Plate',
+      coolPlateSuperTack: 'Cool Plate SuperTack',
+      engineering: 'Engineering Plate',
+      highTemp: 'High Temp Plate',
+      texturedPEI: 'Textured PEI Plate',
+      smoothPEI: 'Smooth PEI Plate',
     },
   },
 
@@ -3409,9 +3451,10 @@ export default {
   // Inventory
   inventory: {
     title: 'Inventaire de Bobines',
+    subtitle: 'Gérez vos bobines',
     spoolmanMixedContentTitle: 'Spoolman ne peut pas se charger en HTTPS — contenu mixte bloqué par votre navigateur',
-    spoolmanMixedContentBody: 'Bambuddy est servi en HTTPS (via votre reverse proxy), mais votre URL Spoolman est encore en HTTP. Les navigateurs bloquent le contenu mixte pour des raisons de sécurité, donc l\'interface Spoolman intégrée ne peut pas s\'afficher. Spoolman doit être accessible en HTTPS.',
-    spoolmanMixedContentFixReverseProxy: 'Placez Spoolman derrière le même reverse proxy que Bambuddy (Traefik / Nginx / Caddy) en HTTPS, puis mettez à jour l\'URL Spoolman dans les Paramètres avec la nouvelle adresse HTTPS.',
+    spoolmanMixedContentBody: 'GroundsKeeper est servi en HTTPS (via votre reverse proxy), mais votre URL Spoolman est encore en HTTP. Les navigateurs bloquent le contenu mixte pour des raisons de sécurité, donc l\'interface Spoolman intégrée ne peut pas s\'afficher. Spoolman doit être accessible en HTTPS.',
+    spoolmanMixedContentFixReverseProxy: 'Placez Spoolman derrière le même reverse proxy que GroundsKeeper (Traefik / Nginx / Caddy) en HTTPS, puis mettez à jour l\'URL Spoolman dans les Paramètres avec la nouvelle adresse HTTPS.',
     spoolmanMixedContentFixOpenNewTab: 'Alternative : ouvrez Spoolman dans un nouvel onglet en HTTP — les règles de contenu mixte ne s\'appliquent qu\'aux cadres intégrés, un onglet autonome fonctionne.',
     spoolmanOpenInNewTab: 'Ouvrir Spoolman dans un nouvel onglet',
     labels: {
@@ -3565,8 +3608,8 @@ export default {
     showAll: 'Toutes',
     noColorsFound: 'Aucune couleur correspondante',
     noResults: 'Aucun résultat',
-    // Multi-colour gradient + visual effect (#1154) — English fallback.
-    extraColorsLabel: 'Extra colours',
+    // Multi-color gradient + visual effect (#1154) — English fallback.
+    extraColorsLabel: 'Extra colors',
     extraColorsPlaceholder: 'EC984C,#6CD4BC,A66EB9,D87694',
     extraColorsHint: 'Paste 2 to 8 hex stops, separated by commas. Renders as a gradient.',
     extraColorsInvalid: 'Ignored invalid hex: {{tokens}}',
@@ -3824,7 +3867,7 @@ export default {
     cloudProfiles: 'Profils Cloud',
     cloudProfilesDescription: 'Préréglages de filament, imprimante et processus depuis Bambu Cloud',
     appSettings: 'Paramètres de l\'application',
-    appSettingsDescription: 'Configuration Bambuddy (base de données complète)',
+    appSettingsDescription: 'Configuration GroundsKeeper (base de données complète)',
     spoolInventory: 'Inventaire des bobines',
     spoolInventoryDescription: 'Bobines de filament, historique d\'utilisation et suivi des coûts',
     printArchives: 'Archives d\'impression',
@@ -3859,7 +3902,7 @@ export default {
 
     // Local Backup
     localBackup: 'Sauvegarde locale',
-    localBackupDescription: 'Créez une sauvegarde complète de vos données Bambuddy incluant la base de données, les archives, les téléchargements et tous les fichiers.',
+    localBackupDescription: 'Créez une sauvegarde complète de vos données GroundsKeeper incluant la base de données, les archives, les téléchargements et tous les fichiers.',
     downloadBackupLabel: 'Télécharger la sauvegarde',
     completeBackupZip: 'Sauvegarde complète : base de données + tous les fichiers (ZIP)',
     download: 'Télécharger',
@@ -3875,7 +3918,7 @@ export default {
     restoreConfirmMessage: 'Êtes-vous sûr de vouloir restaurer depuis "{{filename}}" ? Cela remplacera complètement votre base de données et tous vos fichiers. L\'application devra être redémarrée après la restauration.',
     restoreConfirmButton: 'Restaurer la sauvegarde',
     uploadingFile: 'Téléchargement du fichier de sauvegarde...',
-    backupRestoredRestart: 'Sauvegarde restaurée. Veuillez redémarrer Bambuddy.',
+    backupRestoredRestart: 'Sauvegarde restaurée. Veuillez redémarrer GroundsKeeper.',
     failedToRestore: 'Échec de la restauration. Veuillez vérifier le format du fichier.',
     reloadNow: 'Recharger maintenant',
     creatingBackup: 'Création de la sauvegarde',
@@ -4107,7 +4150,7 @@ export default {
       right: 'Droite',
       notes: 'Notes (locales)',
       notesPlaceholder: 'Notes sur ce profil...',
-      notesHelp: 'Enregistré dans Bambuddy, pas sur l\'imprimante',
+      notesHelp: 'Enregistré dans GroundsKeeper, pas sur l\'imprimante',
       syncing: 'Sync avec l\'imprimante...',
       savingExtruder: 'Sauvegarde extrudeur {{current}}/{{total}}...',
       pleaseWait: 'Patientez...',
@@ -4162,7 +4205,7 @@ export default {
     },
     enable: {
       title: 'Activer l\'imprimante virtuelle',
-      visibleInSlicer: 'Visible comme "Bambuddy" dans le Slicer',
+      visibleInSlicer: 'Visible comme "GroundsKeeper" dans le Slicer',
       proxyingTo: 'Proxy vers {{name}}',
       notActive: 'Inactive',
     },
@@ -4212,7 +4255,7 @@ export default {
     },
     queueForceColorMatch: {
       title: 'Force color match',
-      description: 'Refuse to dispatch onto a printer that does not have the exact filament type and color loaded. Off by default — without this, the queue uses model-only matching and may pick a printer with the wrong colour loaded.',
+      description: 'Refuse to dispatch onto a printer that does not have the exact filament type and color loaded. Off by default — without this, the queue uses model-only matching and may pick a printer with the wrong color loaded.',
     },
     tailscaleDisabled: {
       title: 'Intégration Tailscale',
@@ -4226,7 +4269,7 @@ export default {
     howItWorks: {
       title: 'Fonctionnement',
       step1: 'Sur le même LAN, les imprimantes virtuelles apparaissent automatiquement dans votre slicer (Bambu Studio / OrcaSlicer). Depuis d\'autres réseaux, ajoutez-les manuellement par adresse IP et code d\'accès.',
-      step2: 'En mode Archive, Revue et File d\'attente, utilisez le bouton "Envoyer" dans votre slicer pour envoyer des fichiers 3MF à Bambuddy. Le slicer affichera "Impression réussie" — le fichier est stocké, pas imprimé.',
+      step2: 'En mode Archive, Revue et File d\'attente, utilisez le bouton "Envoyer" dans votre slicer pour envoyer des fichiers 3MF à GroundsKeeper. Le slicer affichera "Impression réussie" — le fichier est stocké, pas imprimé.',
       step3: 'En mode Proxy, l\'imprimante virtuelle relaie tout le trafic vers une vraie imprimante — les impressions démarrent immédiatement comme en connexion directe.',
     },
     status: {
@@ -4971,7 +5014,7 @@ export default {
   // Email Settings
   emailSettings: {
     placeholders: {
-      fromName: 'BamBuddy',
+      fromName: 'GroundsKeeper',
     },
   },
 
@@ -5265,7 +5308,7 @@ export default {
       upToDate: 'À jour',
       includeBeta: 'Inclure les versions bêta',
       systemConfig: 'Backend & authentification',
-      backendUrl: 'URL du backend Bambuddy',
+      backendUrl: 'URL du backend GroundsKeeper',
       apiToken: 'Jeton d\'API',
       apiTokenPlaceholder: 'Saisir un jeton d\'API',
       saveConfig: 'Enregistrer la configuration',
@@ -5381,7 +5424,7 @@ export default {
     pollInterval: 'Intervalle de vérification (secondes)',
     pollIntervalHint: 'Fréquence de vérification de chaque imprimante pendant l\'impression. Minimum 5s, maximum 120s.',
     externalUrlMissing: 'External URL is not set.',
-    externalUrlHint: 'The ML API fetches the camera snapshot by URL. Set the External URL in General settings so the ML API container can reach Bambuddy.',
+    externalUrlHint: 'The ML API fetches the camera snapshot by URL. Set the External URL in General settings so the ML API container can reach GroundsKeeper.',
     perPrinterTitle: 'Imprimantes surveillées',
     perPrinterHint: 'Choisissez quelles imprimantes le service de détection surveille.',
     monitorAll: 'Surveiller toutes les imprimantes connectées',
@@ -5395,7 +5438,7 @@ export default {
   },
   makerworld: {
     title: 'MakerWorld',
-    description: 'Collez une URL de modèle MakerWorld pour l\'importer et l\'imprimer directement depuis Bambuddy — sans passer par l\'application Bambu Handy.',
+    description: 'Collez une URL de modèle MakerWorld pour l\'importer et l\'imprimer directement depuis GroundsKeeper — sans passer par l\'application Bambu Handy.',
     pasteUrlHeader: 'Importer depuis MakerWorld',
     pasteUrlPlaceholder: 'https://makerworld.com/en/models/… ou collez n\'importe quel lien MakerWorld',
     resolveButton: 'Résoudre',
@@ -5418,7 +5461,7 @@ export default {
     alsoCompatible: 'Also marked compatible: {{printers}}',
     importToLibrary: 'Enregistrer',
     sliceIn: 'Enregistrer et découper dans {{slicer}}',
-    disclaimer: 'L\'intégration MakerWorld utilise des points de terminaison API documentés par la communauté. Bambuddy n\'est ni affilié ni approuvé par MakerWorld ou Bambu Lab.',
+    disclaimer: 'L\'intégration MakerWorld utilise des points de terminaison API documentés par la communauté. GroundsKeeper n\'est ni affilié ni approuvé par MakerWorld ou Bambu Lab.',
     lastImportSuccess: 'Importé dans votre bibliothèque',
     lastImportAlreadyInLibrary: 'Déjà dans votre bibliothèque',
     viewInLibrary: 'Voir dans le Gestionnaire de fichiers',
@@ -5514,7 +5557,7 @@ export default {
     effect1: 'Matching files are moved to Trash — they are not deleted from disk yet.',
     effect2: 'You can restore them from Trash at any time until the retention window expires.',
     effect3: 'After retention, the trash sweeper permanently removes them from disk.',
-    effect4: 'Files in external (linked) folders are skipped — Bambuddy never deletes bytes it does not own.',    previewLoading: 'Vérification du nombre de fichiers concernés…',
+    effect4: 'Files in external (linked) folders are skipped — GroundsKeeper never deletes bytes it does not own.',    previewLoading: 'Vérification du nombre de fichiers concernés…',
     previewFailed: 'Impossible de prévisualiser la purge.',
     previewSummary: '{{count}} fichiers · {{size}} seraient déplacés vers la corbeille',
     andMore: '…et {{count}} de plus',

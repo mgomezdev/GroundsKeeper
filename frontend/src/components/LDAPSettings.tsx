@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Shield, Lock, Unlock, AlertTriangle, CheckCircle, Loader2, Send } from 'lucide-react';
@@ -132,7 +132,7 @@ export function LDAPSettings() {
       return;
     }
 
-    // Build the update payload — only include password if user entered one
+    // Build the update payload â€” only include password if user entered one
     const update: Record<string, unknown> = {
       ldap_server_url: form.ldap_server_url,
       ldap_bind_dn: form.ldap_bind_dn,
@@ -215,7 +215,7 @@ export function LDAPSettings() {
                   <ul className="text-sm text-green-300 space-y-1 list-disc list-inside">
                     <li>{t('settings.ldap.feature1') || 'Users can login with LDAP credentials'}</li>
                     <li>{t('settings.ldap.feature2') || 'Local admin account remains as fallback'}</li>
-                    <li>{t('settings.ldap.feature3') || 'LDAP groups are mapped to BamBuddy groups on login'}</li>
+                    <li>{t('settings.ldap.feature3') || 'LDAP groups are mapped to GroundsKeeper groups on login'}</li>
                   </ul>
                 </div>
               </div>
@@ -310,7 +310,7 @@ export function LDAPSettings() {
                 <input
                   type="password"
                   className={inputClasses}
-                  placeholder={settings?.ldap_bind_dn ? '••••••••' : ''}
+                  placeholder={settings?.ldap_bind_dn ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : ''}
                   value={form.ldap_bind_password}
                   onChange={e => setForm({ ...form, ldap_bind_password: e.target.value })}
                 />
@@ -363,7 +363,7 @@ export function LDAPSettings() {
                       {t('settings.ldap.autoProvision') || 'Auto-provision users'}
                     </label>
                     <p className="text-xs text-bambu-gray mt-0.5">
-                      {t('settings.ldap.autoProvisionHint') || 'Automatically create a BamBuddy account on first LDAP login'}
+                      {t('settings.ldap.autoProvisionHint') || 'Automatically create a GroundsKeeper account on first LDAP login'}
                     </p>
                   </div>
                   <button
@@ -390,7 +390,7 @@ export function LDAPSettings() {
                     value={form.ldap_default_group}
                     onChange={e => setForm({ ...form, ldap_default_group: e.target.value })}
                   >
-                    <option value="">{t('settings.ldap.defaultGroupNone') || '— None (reject login) —'}</option>
+                    <option value="">{t('settings.ldap.defaultGroupNone') || 'â€” None (reject login) â€”'}</option>
                     {groups.map(g => (
                       <option key={g.id} value={g.name}>{g.name}</option>
                     ))}
@@ -413,7 +413,7 @@ export function LDAPSettings() {
                     onChange={e => setForm({ ...form, ldap_group_mapping: e.target.value })}
                   />
                   <p className="text-xs text-bambu-gray mt-1">
-                    {t('settings.ldap.groupMappingHint') || 'Map LDAP group DNs to BamBuddy groups. Available groups: '}{groups.map(g => g.name).join(', ')}
+                    {t('settings.ldap.groupMappingHint') || 'Map LDAP group DNs to GroundsKeeper groups. Available groups: '}{groups.map(g => g.name).join(', ')}
                   </p>
                 </div>
               </div>

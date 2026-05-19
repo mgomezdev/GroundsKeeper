@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 
+from backend.app.services.abstract_printer_client import AbstractPrinterClient
+
 logger = logging.getLogger(__name__)
 
 # AMS module name prefixes used in get_version responses.
@@ -309,9 +311,10 @@ def get_stage_name(stage: int) -> str:
     return STAGE_NAMES.get(stage, f"Unknown stage ({stage})")
 
 
-class BambuMQTTClient:
+class BambuMQTTClient(AbstractPrinterClient):
     """MQTT client for Bambu Lab printer communication."""
 
+    printer_type = "bambu"
     MQTT_PORT = 8883
 
     # Class-level cache: serial_number -> False when request topic is known unsupported.
@@ -431,6 +434,10 @@ class BambuMQTTClient:
     @property
     def topic_publish(self) -> str:
         return f"device/{self.serial_number}/request"
+
+    @property
+    def connected(self) -> bool:
+        return self.state.connected
 
     # Maximum time (seconds) without a message before considering connection stale
     STALE_TIMEOUT = 60.0
@@ -2779,6 +2786,7 @@ class BambuMQTTClient:
         current_file = self.state.gcode_file or self.state.current_print
         is_new_print = (
             self.state.state == "RUNNING"
+            and self._previous_gcode_state is not None  # #1304: skip on first push after Bambuddy startup
             and self._previous_gcode_state != "RUNNING"
             and current_file
             and not self._was_running  # Prevent duplicates when resuming from PAUSE
@@ -3122,34 +3130,25 @@ class BambuMQTTClient:
         self._client.connect_async(self.ip_address, self.MQTT_PORT, keepalive=30)
         self._client.loop_start()
 
-    def start_print(
-        self,
-        filename: str,
-        plate_id: int = 1,
-        ams_mapping: list[int] | None = None,
-        bed_levelling: bool = True,
-        flow_cali: bool = False,
-        vibration_cali: bool = True,
-        layer_inspect: bool = False,
-        timelapse: bool = False,
-        use_ams: bool = True,
-    ):
+    def start_print(self, file_name: str, options=None) -> bool:
         """Start a print job on the printer.
 
         The file should already be uploaded to the printer's root directory via FTP.
-
-        Args:
-            filename: Name of the uploaded file
-            plate_id: Plate number to print (default 1)
-            ams_mapping: List of tray IDs for each filament slot in the 3MF.
-                         Global tray ID = (ams_id * 4) + slot_id, external = 254
-            timelapse: Record timelapse video
-            bed_levelling: Auto bed levelling before print
-            flow_cali: Flow/pressure advance calibration
-            vibration_cali: Vibration compensation calibration
-            layer_inspect: First layer AI inspection
-            use_ams: Use AMS for automatic filament changes
+        ``options`` is a ``StartPrintOptions`` instance (or None for defaults).
         """
+        from backend.app.services.abstract_printer_client import StartPrintOptions
+
+        opts = options if isinstance(options, StartPrintOptions) else StartPrintOptions()
+        filename = file_name
+        plate_id = opts.plate_id
+        ams_mapping = opts.ams_mapping
+        bed_levelling = opts.bed_levelling
+        flow_cali = opts.flow_cali
+        vibration_cali = opts.vibration_cali
+        layer_inspect = opts.layer_inspect
+        timelapse = opts.timelapse
+        use_ams = opts.use_ams
+
         if self._client and self.state.connected:
             # Bambu print command format - matches Bambu Studio's format
             # H2D series requires integer values (0/1) for calibration/leveling fields
@@ -4584,17 +4583,27 @@ class BambuMQTTClient:
             logger.warning("[%s] Cannot set AMS filament setting: not connected", self.serial_number)
             return False
 
-        # Calculate mqtt IDs based on AMS type
+        # Calculate mqtt IDs based on AMS type.
+        # External-spool convention verified against a BambuStudio→X1C packet capture
+        # (issue #1279, May 2026): for `ams_filament_setting` Studio sends the
+        # *global* tray index in `tray_id`, not a local position within the virtual
+        # unit. The printer's response echoes `tray_id: 0` (slot position), which
+        # is what the original code was matching — but the request and response
+        # use different semantics for that field. Sending `tray_id: 0` is what
+        # the P1S in #1279 rejected with `result: "fail"`.
         if ams_id == 255:
             vt_tray = self.state.raw_data.get("vt_tray", []) if self.state.raw_data else []
             if len(vt_tray) > 1:
                 # Dual external slots (H2D): each ext slot is its own virtual AMS unit
-                # (254=ext-L / slot 0, 255=ext-R / slot 1)
+                # (254=ext-L / slot 0, 255=ext-R / slot 1). The dual case is NOT
+                # covered by the X1C capture — left at `mqtt_tray_id = 0` until a
+                # captured Studio→H2D exchange confirms the correct value.
                 mqtt_ams_id = 254 + tray_id
+                mqtt_tray_id = 0
             else:
-                # Single external slot (X1C, P1S, A1): always ams_id=255
+                # Single external slot (X1C, P1S, A1): global tray_id=254.
                 mqtt_ams_id = 255
-            mqtt_tray_id = 0
+                mqtt_tray_id = 254
             slot_id = 0
         elif ams_id <= 3:
             mqtt_ams_id = ams_id
@@ -4649,16 +4658,18 @@ class BambuMQTTClient:
             logger.warning("[%s] Cannot reset AMS slot: not connected", self.serial_number)
             return False
 
-        # Calculate mqtt IDs based on AMS type
+        # Calculate mqtt IDs based on AMS type — same convention as
+        # ams_set_filament_setting above. See its comment for the #1279 capture rationale.
         if ams_id == 255:
             vt_tray = self.state.raw_data.get("vt_tray", []) if self.state.raw_data else []
             if len(vt_tray) > 1:
                 # Dual external slots (H2D): each ext slot is its own virtual AMS unit
                 mqtt_ams_id = 254 + tray_id
+                mqtt_tray_id = 0
             else:
-                # Single external slot (X1C, P1S, A1): always ams_id=255
+                # Single external slot (X1C, P1S, A1): global tray_id=254.
                 mqtt_ams_id = 255
-            mqtt_tray_id = 0
+                mqtt_tray_id = 254
             slot_id = 0
         elif ams_id <= 3:
             mqtt_ams_id = ams_id
@@ -4883,3 +4894,168 @@ class BambuMQTTClient:
         self._client.publish(self.topic_publish, json.dumps(pushall), qos=1)
         logger.info("[%s] Set liveview %s", self.serial_number, "enabled" if enable else "disabled")
         return True
+
+    def on_forced_offline(self) -> None:
+        self.state.state = "unknown"
+
+    @property
+    def is_idle(self) -> bool:
+        return self.state.state in ("IDLE", "FINISH", "FAILED")
+
+    @property
+    def is_printing(self) -> bool:
+        return self.state.state in ("RUNNING", "PAUSE", "PRINTING")
+
+    def get_loaded_filaments(self) -> list[dict]:
+        """Return AMS trays + external spools in normalized format."""
+        raw_data = self.state.raw_data or {}
+        ams_extruder_map = raw_data.get("ams_extruder_map", {})
+        filaments = []
+
+        for ams_unit in raw_data.get("ams", []):
+            ams_id = str(ams_unit.get("id", 0))
+            extruder_id = ams_extruder_map.get(ams_id)
+            for tray in ams_unit.get("tray", []):
+                tray_type = tray.get("tray_type")
+                if not tray_type:
+                    continue
+                tray_color = tray.get("tray_color", "")
+                hex_color = tray_color.replace("#", "")[:6] if tray_color else "808080"
+                filaments.append({
+                    "type": tray_type,
+                    "color": f"#{hex_color}",
+                    "tray_info_idx": tray.get("tray_info_idx", ""),
+                    "tray_sub_brands": tray.get("tray_sub_brands", "") or "",
+                    "extruder_id": extruder_id,
+                    "is_external": False,
+                })
+
+        for vt in raw_data.get("vt_tray") or []:
+            vt_type = vt.get("tray_type")
+            if not vt_type:
+                continue
+            vt_color = vt.get("tray_color", "")
+            hex_color = vt_color.replace("#", "")[:6] if vt_color else "808080"
+            vt_id = int(vt.get("id", 254))
+            extruder_id = (255 - vt_id) if ams_extruder_map else None
+            filaments.append({
+                "type": vt_type,
+                "color": f"#{hex_color}",
+                "tray_info_idx": vt.get("tray_info_idx", ""),
+                "tray_sub_brands": vt.get("tray_sub_brands", "") or "",
+                "extruder_id": extruder_id,
+                "is_external": True,
+            })
+
+        return filaments
+
+    # ------------------------------------------------------------------ #
+    # File management (AbstractPrinterClient interface)                    #
+    # ------------------------------------------------------------------ #
+
+    file_listing_supported = True
+
+    @property
+    def file_upload_supported(self) -> bool:
+        return True
+
+    def list_files(self, directory: str = "/") -> list[dict]:
+        """List files via FTP. Returns normalized dicts with name/size/path/is_directory."""
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.list_files(directory)
+            finally:
+                ftp.disconnect()
+        return []
+
+    def delete_file(self, remote_path: str) -> bool:
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.delete_file(remote_path)
+            finally:
+                ftp.disconnect()
+        return False
+
+    def storage_info(self) -> dict | None:
+        from backend.app.services.bambu_ftp import BambuFTPClient
+        ftp = BambuFTPClient(self.ip_address, self.access_code, printer_model=self.model)
+        if ftp.connect():
+            try:
+                return ftp.get_storage_info()
+            finally:
+                ftp.disconnect()
+        return None
+
+    async def upload_file_async(
+        self,
+        file_path,
+        remote_path: str,
+        progress_callback=None,
+        non_retry_exceptions: tuple = (),
+    ) -> bool:
+        from backend.app.services.bambu_ftp import (
+            delete_file_async,
+            get_ftp_retry_settings,
+            upload_file_async as _ftp_upload,
+            with_ftp_retry,
+        )
+        ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+        if ftp_retry_enabled:
+            return await with_ftp_retry(
+                _ftp_upload,
+                self.ip_address,
+                self.access_code,
+                file_path,
+                remote_path,
+                progress_callback=progress_callback,
+                socket_timeout=ftp_timeout,
+                printer_model=self.model,
+                max_retries=ftp_retry_count,
+                retry_delay=ftp_retry_delay,
+                non_retry_exceptions=non_retry_exceptions,
+            )
+        return await _ftp_upload(
+            self.ip_address,
+            self.access_code,
+            file_path,
+            remote_path,
+            progress_callback=progress_callback,
+            socket_timeout=ftp_timeout,
+            printer_model=self.model,
+        )
+
+    async def delete_remote_file(self, remote_path: str) -> bool:
+        from backend.app.services.bambu_ftp import delete_file_async, get_ftp_retry_settings
+        _, _, _, ftp_timeout = await get_ftp_retry_settings()
+        try:
+            return await delete_file_async(
+                self.ip_address,
+                self.access_code,
+                remote_path,
+                socket_timeout=ftp_timeout,
+                printer_model=self.model,
+            )
+        except Exception:
+            return False
+
+    def get_capabilities(self):
+        from backend.app.services.abstract_printer_client import PrinterCapabilities
+        multi_nozzle = bool(self.model and "H2" in self.model)
+        return PrinterCapabilities(
+            ams=True,
+            file_upload=True,
+            bed_levelling=True,
+            flow_calibration=True,
+            vibration_cali=True,
+            layer_inspect=True,
+            timelapse=True,
+            chamber_light=True,
+            gcode=True,
+            pause_resume=True,
+            skip_objects=True,
+            multi_nozzle=multi_nozzle,
+        )

@@ -11,39 +11,40 @@ class Printer(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
-    serial_number: Mapped[str] = mapped_column(String(50), unique=True)
+    printer_type: Mapped[str] = mapped_column(String(20), default="bambu")
     ip_address: Mapped[str] = mapped_column(String(253))
-    access_code: Mapped[str] = mapped_column(String(20))
     model: Mapped[str | None] = mapped_column(String(50))
-    location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
-    nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT
+    location: Mapped[str | None] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_archive: Mapped[bool] = mapped_column(Boolean, default=True)
-    print_hours_offset: Mapped[float] = mapped_column(Float, default=0.0)  # Baseline hours to add
-    runtime_seconds: Mapped[int] = mapped_column(default=0)  # Accumulated active runtime (RUNNING/PAUSE states)
-    last_runtime_update: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )  # Last time runtime was updated
+    print_hours_offset: Mapped[float] = mapped_column(Float, default=0.0)
+    runtime_seconds: Mapped[int] = mapped_column(default=0)
+    last_runtime_update: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Legacy Bambu columns — kept nullable for backward compat with existing column selectors
+    # in support.py and spoolman_tracking.py.  Canonical data lives in BambuPrinterConfig.
+    serial_number: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
+    access_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    nozzle_count: Mapped[int] = mapped_column(default=1)
     # External camera configuration
     external_camera_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    external_camera_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # mjpeg, rtsp, snapshot
+    external_camera_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     external_camera_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Optional single-frame snapshot URL — when set, used for snapshot / finish-photo
-    # / timelapse / plate-detect captures instead of opening the live stream and
-    # skipping a warm-up frame. Bypasses MJPEG warm-up issues on sources that
-    # expose a dedicated frame endpoint (e.g. go2rtc's /api/frame.jpeg). #1177.
+    # Optional single-frame snapshot URL — see #1177
     external_camera_snapshot_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    camera_rotation: Mapped[int] = mapped_column(default=0)  # 0, 90, 180, 270 degrees
-    # Plate detection - check if build plate is empty before starting print
+    camera_rotation: Mapped[int] = mapped_column(default=0)
+    # Plate detection — works for any printer with a camera
     plate_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # ROI for plate detection (percentages: 0.0-1.0)
-    plate_detection_roi_x: Mapped[float | None] = mapped_column(Float, nullable=True)  # X start %
-    plate_detection_roi_y: Mapped[float | None] = mapped_column(Float, nullable=True)  # Y start %
-    plate_detection_roi_w: Mapped[float | None] = mapped_column(Float, nullable=True)  # Width %
-    plate_detection_roi_h: Mapped[float | None] = mapped_column(Float, nullable=True)  # Height %
-    # Queue: True after a print finishes/fails, until user acknowledges the plate is cleared.
-    # Persisted so the gate survives crashes and power cycles (issue #961).
+    plate_detection_roi_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    plate_detection_roi_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    plate_detection_roi_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    plate_detection_roi_h: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Universal gate: True after a print finishes/fails until the user clears the plate (#961)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Excluded from automatic queue dispatch; can still receive jobs sent directly
+    out_of_queue: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Type-specific config stored as JSON text. Validated against the matching
+    # PrinterTypeSchema.config_schema on write. Not used for Bambu (uses BambuPrinterConfig).
+    printer_config: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -56,11 +57,20 @@ class Printer(Base):
     )
     kprofile_notes: Mapped[list["KProfileNote"]] = relationship(back_populates="printer", cascade="all, delete-orphan")
     ams_history: Mapped[list["AMSSensorHistory"]] = relationship(back_populates="printer", cascade="all, delete-orphan")
+    # Vendor-specific config (at most one of these is populated per printer)
+    bambu_config: Mapped["BambuPrinterConfig | None"] = relationship(
+        back_populates="printer", cascade="all, delete-orphan", uselist=False
+    )
+    moonraker_config: Mapped["MoonrakerPrinterConfig | None"] = relationship(
+        back_populates="printer", cascade="all, delete-orphan", uselist=False
+    )
 
 
 from backend.app.models.ams_history import AMSSensorHistory  # noqa: E402
 from backend.app.models.archive import PrintArchive  # noqa: E402
+from backend.app.models.bambu_printer_config import BambuPrinterConfig  # noqa: E402
 from backend.app.models.kprofile_note import KProfileNote  # noqa: E402
 from backend.app.models.maintenance import PrinterMaintenance  # noqa: E402
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig  # noqa: E402
 from backend.app.models.notification import NotificationProvider  # noqa: E402
 from backend.app.models.smart_plug import SmartPlug  # noqa: E402

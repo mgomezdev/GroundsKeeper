@@ -46,8 +46,9 @@ class PrintQueueItem(Base):
     # Power management
     auto_off_after: Mapped[bool] = mapped_column(Boolean, default=False)  # Power off printer after print
 
-    # AMS mapping: JSON array of global tray IDs for each filament slot
-    # Format: "[5, -1, 2, -1]" where position = slot_id-1, value = global tray ID (-1 = unused)
+    # Filament slot mapping. Bambu semantics: position = slot_id-1, value = global tray ID
+    # (-1 = unused, 254/255 = external spool). Non-Bambu single-spool printers store null.
+    # Named ams_mapping for backwards-compat; rename to filament_slot_mapping in a future migration.
     ams_mapping: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Filament overrides for model-based assignment: JSON array of override objects
@@ -73,6 +74,14 @@ class PrintQueueItem(Base):
     timelapse: Mapped[bool] = mapped_column(Boolean, default=False)
     use_ams: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Slice-on-dispatch: set when this item was queued without a pre-sliced archive.
+    # Cleared after successful slice; item.archive_id is set instead.
+    slice_config_id: Mapped[int | None] = mapped_column(
+        ForeignKey("print_slice_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    # Error message when slicing failed at dispatch time
+    slice_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Status: pending, printing, completed, failed, skipped, cancelled
     status: Mapped[str] = mapped_column(String(20), default="pending")
 
@@ -94,11 +103,13 @@ class PrintQueueItem(Base):
     project: Mapped["Project | None"] = relationship(back_populates="queue_items")
     batch: Mapped["PrintBatch | None"] = relationship(back_populates="queue_items")
     created_by: Mapped["User | None"] = relationship()
+    slice_config: Mapped["PrintSliceConfig | None"] = relationship()
 
 
 from backend.app.models.archive import PrintArchive  # noqa: E402
 from backend.app.models.library import LibraryFile  # noqa: E402
 from backend.app.models.print_batch import PrintBatch  # noqa: E402
+from backend.app.models.print_slice_config import PrintSliceConfig  # noqa: E402
 from backend.app.models.printer import Printer  # noqa: E402
 from backend.app.models.project import Project  # noqa: E402
 from backend.app.models.user import User  # noqa: E402

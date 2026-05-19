@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.printer import Printer
+from backend.app.services.abstract_printer_client import AbstractPrinterClient
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
+from backend.app.services.printer_client_factory import create_client
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,24 @@ def has_stg_cur_idle_bug(model: str | None) -> bool:
     return model_upper in STG_CUR_IDLE_BUG_MODELS
 
 
+def is_bed_slinger(model: str | None) -> bool:
+    """Whether the printer's Z axis controls the *toolhead*, not the bed.
+
+    Bambu's A1 family (A1, A1 Mini; internal codes N1 / N2S) are open-frame
+    bed-slingers: the bed moves on Y, the toolhead moves on X+Z. On every
+    other current model (X1, P1, H2, H2C, H2D, H2S, P2S, ...) the bed moves
+    on Z and the toolhead is fixed in Z.
+
+    G-code direction is opposite on these two families. `G1 Z-10` reduces
+    the nozzle-bed gap on both, but on bed-on-Z machines it does so by
+    moving the BED up, while on bed-slingers it does so by moving the
+    TOOLHEAD down — which is what crashed the nozzle in #1334.
+    """
+    if not model:
+        return False
+    return model.strip().upper() in A1_MODELS
+
+
 # Minimum firmware versions for AMS drying support (confirmed via capture testing)
 # Keys are exact model names (upper-cased). Do NOT use substring matching — it would
 # incorrectly gate X1E (matched by "X1") and H2D Pro (matched by "H2D").
@@ -146,12 +166,12 @@ class PrinterManager:
     """Manager for multiple printer connections."""
 
     def __init__(self):
-        self._clients: dict[int, BambuMQTTClient] = {}
+        self._clients: dict[int, AbstractPrinterClient] = {}
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         self._on_print_start: Callable[[int, dict], None] | None = None
         self._on_print_complete: Callable[[int, dict], None] | None = None
-        self._on_status_change: Callable[[int, PrinterState], None] | None = None
+        self._on_status_change: Callable[[int, object], None] | None = None
         self._on_ams_change: Callable[[int, list], None] | None = None
         self._on_layer_change: Callable[[int, int], None] | None = None
         self._on_bed_temp_update: Callable[[int, float], None] | None = None
@@ -229,20 +249,25 @@ class PrinterManager:
         application-layer infra at module-import time — the broadcast is the
         only thing here that needs it.
         """
-        state = self.get_status(printer_id)
+        client = self._clients.get(printer_id)
+        if not client:
+            return
+        state = client.state
         if not state:
-            # Printer disconnected or unknown — nothing to broadcast. The
-            # next reconnect will produce a fresh status push anyway, so the
-            # UI eventually catches up without us forcing a stale snapshot
-            # on subscribers now.
             return
         try:
             from backend.app.core.websocket import ws_manager
 
-            await ws_manager.send_printer_status(
-                printer_id,
-                printer_state_to_dict(state, printer_id, self.get_model(printer_id)),
-            )
+            serializer = _STATUS_SERIALIZERS.get(client.printer_type)
+            if not serializer:
+                logger.warning("No status serializer for printer_type=%s", client.printer_type)
+                return
+            status_dict = serializer(state, printer_id, self.get_model(printer_id))
+            caps = self.get_capabilities_dict(printer_id)
+            if caps is not None:
+                status_dict["capabilities"] = caps
+
+            await ws_manager.send_printer_status(printer_id, status_dict)
         except Exception as e:
             logger.warning(
                 "Failed to broadcast printer_status after Bambuddy-side state change for printer %d: %s",
@@ -288,8 +313,8 @@ class PrinterManager:
         """Set callback for print completion events."""
         self._on_print_complete = callback
 
-    def set_status_change_callback(self, callback: Callable[[int, PrinterState], None]):
-        """Set callback for status change events."""
+    def set_status_change_callback(self, callback: Callable[[int, object], None]):
+        """Set callback for status change events. Receives (printer_id, vendor_state)."""
         self._on_status_change = callback
 
     def set_ams_change_callback(self, callback: Callable[[int, list], None]):
@@ -355,11 +380,8 @@ class PrinterManager:
             if self._on_bed_temp_update:
                 self._schedule_async(self._on_bed_temp_update(printer_id, bed_temp))
 
-        client = BambuMQTTClient(
-            ip_address=printer.ip_address,
-            serial_number=printer.serial_number,
-            access_code=printer.access_code,
-            model=printer.model,
+        client = create_client(
+            printer,
             on_state_change=on_state_change,
             on_print_start=on_print_start,
             on_print_complete=on_print_complete,
@@ -368,10 +390,11 @@ class PrinterManager:
             on_bed_temp_update=on_bed_temp_update,
         )
 
-        client.connect()
+        client.connect(self._loop)
         self._clients[printer_id] = client
         self._models[printer_id] = printer.model  # Cache model for feature detection
-        self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
+        device_id = printer.bambu_config.serial_number if printer.bambu_config else printer.ip_address
+        self._printer_info[printer_id] = PrinterInfo(printer.name, device_id)
 
         # Wait a moment for connection
         await asyncio.sleep(1)
@@ -390,11 +413,18 @@ class PrinterManager:
         for printer_id in list(self._clients.keys()):
             self.disconnect_printer(printer_id, timeout=timeout)
 
-    def get_status(self, printer_id: int) -> PrinterState | None:
-        """Get the current status of a printer (checks for stale connections)."""
+    def get_status(self, printer_id: int):
+        """Get the current state object for a printer (vendor-specific type)."""
         if printer_id in self._clients:
             client = self._clients[printer_id]
-            # Check staleness and update connected state if needed
+            client.check_staleness()
+            return client.state
+        return None
+
+    def get_bambu_status(self, printer_id: int) -> PrinterState | None:
+        """Get the PrinterState only for Bambu clients."""
+        client = self._clients.get(printer_id)
+        if isinstance(client, BambuMQTTClient):
             client.check_staleness()
             return client.state
         return None
@@ -403,11 +433,10 @@ class PrinterManager:
         """Get the cached model for a printer."""
         return self._models.get(printer_id)
 
-    def get_all_statuses(self) -> dict[int, PrinterState]:
-        """Get status of all connected printers (checks for stale connections)."""
+    def get_all_statuses(self) -> dict[int, object]:
+        """Get state objects for all connected printers (vendor-specific types)."""
         result = {}
         for printer_id, client in self._clients.items():
-            # Check staleness and update connected state if needed
             client.check_staleness()
             result[printer_id] = client.state
         return result
@@ -420,29 +449,39 @@ class PrinterManager:
             return client.check_staleness()
         return False
 
-    def get_client(self, printer_id: int) -> BambuMQTTClient | None:
-        """Get the MQTT client for a printer."""
+    def get_client(self, printer_id: int) -> AbstractPrinterClient | None:
+        """Get the client for a printer."""
         return self._clients.get(printer_id)
+
+    def get_capabilities_dict(self, printer_id: int) -> dict | None:
+        """Return the printer's capabilities as a plain dict, or None if not connected."""
+        from dataclasses import asdict
+        client = self._clients.get(printer_id)
+        return asdict(client.get_capabilities()) if client else None
+
+    def get_bambu_client(self, printer_id: int) -> BambuMQTTClient | None:
+        """Get the client only if it is a BambuMQTTClient (for Bambu-specific operations)."""
+        client = self._clients.get(printer_id)
+        return client if isinstance(client, BambuMQTTClient) else None
 
     def mark_printer_offline(self, printer_id: int):
         """Mark a printer as offline and trigger status callback.
 
         This is used when we know the printer power was cut (e.g., smart plug turned off)
-        to immediately update the UI without waiting for MQTT timeout.
+        to immediately update the UI without waiting for MQTT/poll timeout.
         """
         import logging
 
         logger = logging.getLogger(__name__)
 
-        if printer_id in self._clients:
-            client = self._clients[printer_id]
-            if client.state.connected:
-                logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
-                client.state.connected = False
-                client.state.state = "unknown"
-                # Trigger the status change callback to broadcast via WebSocket
-                if self._on_status_change:
-                    self._schedule_async(self._on_status_change(printer_id, client.state))
+        client = self._clients.get(printer_id)
+        if client and client.connected:
+            logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
+            client.state.connected = False
+            client.on_forced_offline()
+            # Trigger the status change callback to broadcast via WebSocket
+            if self._on_status_change:
+                self._schedule_async(self._on_status_change(printer_id, client.state))
 
     def start_print(
         self,
@@ -468,17 +507,18 @@ class PrinterManager:
             caller.name,
         )
         if printer_id in self._clients:
-            return self._clients[printer_id].start_print(
-                filename,
-                plate_id,
+            from backend.app.services.abstract_printer_client import StartPrintOptions
+            options = StartPrintOptions(
+                plate_id=plate_id,
                 ams_mapping=ams_mapping,
-                timelapse=timelapse,
                 bed_levelling=bed_levelling,
                 flow_cali=flow_cali,
                 vibration_cali=vibration_cali,
                 layer_inspect=layer_inspect,
+                timelapse=timelapse,
                 use_ams=use_ams,
             )
+            return self._clients[printer_id].start_print(filename, options)
         return False
 
     def stop_print(self, printer_id: int) -> bool:
@@ -533,30 +573,30 @@ class PrinterManager:
         return False
 
     def enable_logging(self, printer_id: int, enabled: bool = True) -> bool:
-        """Enable or disable MQTT logging for a printer."""
-        if printer_id in self._clients:
-            self._clients[printer_id].enable_logging(enabled)
+        """Enable or disable MQTT logging for a Bambu printer."""
+        client = self.get_bambu_client(printer_id)
+        if client:
+            client.enable_logging(enabled)
             return True
         return False
 
     def get_logs(self, printer_id: int) -> list[MQTTLogEntry]:
-        """Get MQTT logs for a printer."""
-        if printer_id in self._clients:
-            return self._clients[printer_id].get_logs()
-        return []
+        """Get MQTT logs for a Bambu printer."""
+        client = self.get_bambu_client(printer_id)
+        return client.get_logs() if client else []
 
     def clear_logs(self, printer_id: int) -> bool:
-        """Clear MQTT logs for a printer."""
-        if printer_id in self._clients:
-            self._clients[printer_id].clear_logs()
+        """Clear MQTT logs for a Bambu printer."""
+        client = self.get_bambu_client(printer_id)
+        if client:
+            client.clear_logs()
             return True
         return False
 
     def is_logging_enabled(self, printer_id: int) -> bool:
-        """Check if logging is enabled for a printer."""
-        if printer_id in self._clients:
-            return self._clients[printer_id].logging_enabled
-        return False
+        """Check if MQTT logging is enabled for a Bambu printer."""
+        client = self.get_bambu_client(printer_id)
+        return client.logging_enabled if client else False
 
     def send_drying_command(
         self,
@@ -568,10 +608,11 @@ class PrinterManager:
         filament: str = "",
         rotate_tray: bool = False,
     ) -> bool:
-        """Send AMS drying command to printer."""
-        if printer_id not in self._clients:
+        """Send AMS drying command to a Bambu printer."""
+        client = self.get_bambu_client(printer_id)
+        if not client:
             return False
-        return self._clients[printer_id].send_drying_command(ams_id, temp, duration, mode, filament, rotate_tray)
+        return client.send_drying_command(ams_id, temp, duration, mode, filament, rotate_tray)
 
     def request_status_update(self, printer_id: int) -> bool:
         """Request a full status update from the printer.
@@ -585,29 +626,45 @@ class PrinterManager:
     async def test_connection(
         self,
         ip_address: str,
-        serial_number: str,
-        access_code: str,
+        printer_type: str = "bambu",
+        # Bambu-specific
+        serial_number: str = "",
+        access_code: str = "",
+        # Moonraker-specific
+        port: int = 7125,
+        api_key: str | None = None,
     ) -> dict:
         """Test connection to a printer without persisting."""
-        client = BambuMQTTClient(
-            ip_address=ip_address,
-            serial_number=serial_number,
-            access_code=access_code,
-        )
+        if printer_type == "bambu":
+            client = BambuMQTTClient(
+                ip_address=ip_address,
+                serial_number=serial_number,
+                access_code=access_code,
+            )
+            try:
+                client.connect()
+                await asyncio.sleep(2)
+                return {
+                    "success": client.state.connected,
+                    "state": client.state.state if client.state.connected else None,
+                    "model": client.state.raw_data.get("device_model"),
+                }
+            finally:
+                client.disconnect()
 
-        try:
-            client.connect()
-            await asyncio.sleep(2)
+        if printer_type == "elegoo_centauri":
+            from backend.app.services.elegoo_centauri_client import ElegooCentauriClient
+            client = ElegooCentauriClient(ip_address=ip_address, port=3030)
+            try:
+                client.connect()
+                await asyncio.sleep(2)
+                return {"success": client.state.connected}
+            finally:
+                client.disconnect()
 
-            result = {
-                "success": client.state.connected,
-                "state": client.state.state if client.state.connected else None,
-                "model": client.state.raw_data.get("device_model"),
-            }
-        finally:
-            client.disconnect()
-
-        return result
+        # Moonraker-based printers (snapmaker_u1 falls through here — Klipper/Moonraker)
+        from backend.app.services.moonraker_client import MoonrakerClient
+        return MoonrakerClient.test_connection(ip_address, port=port, api_key=api_key)
 
 
 def get_derived_status_name(state: PrinterState, model: str | None = None) -> str | None:
@@ -711,6 +768,88 @@ def resolve_plate_id(state) -> int | None:
     return parse_plate_id(state.gcode_file)
 
 
+def _moonraker_state_to_dict(state, printer_id: int | None = None) -> dict:
+    """Serialize a MoonrakerState to a JSON-safe dict for WebSocket / REST responses."""
+    from backend.app.services.moonraker_client import MoonrakerState
+
+    if not isinstance(state, MoonrakerState):
+        return {"id": printer_id, "connected": False, "printer_type": "moonraker"}
+
+    # Map Moonraker print_state to Bambu-compatible state names so the frontend
+    # can use the same "state" field for generic logic (idle, printing, paused, etc.)
+    _STATE_MAP = {
+        "printing": "RUNNING",
+        "paused": "PAUSE",
+        "complete": "FINISH",
+        "error": "FAILED",
+        "cancelled": "FAILED",
+        "standby": "IDLE",
+    }
+    mapped_state = _STATE_MAP.get(state.print_state, state.print_state.upper())
+
+    return {
+        "printer_type": "moonraker",
+        "id": printer_id,
+        "connected": state.connected,
+        "state": mapped_state,
+        "current_print": state.filename,
+        "progress": state.progress,
+        "remaining_time": None,
+        "layer_num": state.layer_num,
+        "total_layers": state.total_layers,
+        "temperatures": state.temperatures,
+        "fan_speed": state.fan_speed,
+        "speed_factor": state.speed_factor,
+        "firmware_version": state.firmware_version,
+        "cover_url": None,
+        "klippy_state": state.klippy_state,
+    }
+
+
+_SDCP_STATE_MAP = {
+    "printing": "RUNNING",
+    "paused": "PAUSE",
+    "complete": "FINISH",
+    "standby": "IDLE",
+}
+
+
+def _elegoo_state_to_dict(state, printer_id: int | None = None) -> dict:
+    """Serialize an ElegooState to a JSON-safe dict for WebSocket / REST responses."""
+    from backend.app.services.elegoo_centauri_client import ElegooState
+
+    if not isinstance(state, ElegooState):
+        return {"id": printer_id, "connected": False, "printer_type": "elegoo_centauri"}
+
+    mapped_state = _SDCP_STATE_MAP.get(state.print_state, state.print_state.upper())
+
+    # remaining_time in minutes (Bambu-compatible field)
+    remaining_time = None
+    if state.total_ticks > 0 and state.current_ticks < state.total_ticks:
+        remaining_secs = state.total_ticks - state.current_ticks
+        remaining_time = int(remaining_secs / 60)
+
+    return {
+        "printer_type": "elegoo_centauri",
+        "id": printer_id,
+        "connected": state.connected,
+        "state": mapped_state,
+        "current_print": state.filename,
+        "progress": state.progress,
+        "remaining_time": remaining_time,
+        "layer_num": state.layer_num,
+        "total_layers": state.total_layers,
+        "temperatures": state.temperatures,
+        "fan_speed": state.fan_model,
+        "speed_factor": state.print_speed_pct / 100.0,
+        "firmware_version": state.firmware_version,
+        "machine_name": state.machine_name,
+        "chamber_light": state.chamber_light,
+        "cover_url": None,
+        "klippy_state": "ready" if state.connected else "disconnected",
+    }
+
+
 def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, model: str | None = None) -> dict:
     """Convert PrinterState to a JSON-serializable dict.
 
@@ -750,6 +889,19 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
                 if k_value is None and cali_idx is not None and cali_idx in kprofile_map:
                     k_value = kprofile_map[cali_idx]
 
+                # P1S / A1 Mini physically-empty-slot signal (#1322 follow-up by
+                # @RosdasHH): for a truly empty slot the firmware sends only
+                # {"id": N} — no state, no tray_type, no anything else. Treat
+                # that as the firmware's "no spool" indicator (state=9) so the
+                # assign-spool path in inventory.py can short-circuit a MQTT
+                # publish the firmware would silently drop anyway. The
+                # post-"Reset Slot" A1 Mini BMCU case sends a populated payload
+                # (state=3, tray_type="") — different shape, doesn't match this
+                # guard, still attempts the MQTT push per the #1322 fix.
+                state_val = tray.get("state")
+                if state_val is None and len(tray) == 1 and "id" in tray:
+                    state_val = 9
+
                 trays.append(
                     {
                         "id": int(tray.get("id", 0)),
@@ -767,7 +919,7 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
                         "nozzle_temp_max": tray.get("nozzle_temp_max"),
                         "drying_temp": tray.get("drying_temp"),
                         "drying_time": tray.get("drying_time"),
-                        "state": tray.get("state"),
+                        "state": state_val,
                     }
                 )
             # Prefer humidity_raw (actual percentage) over humidity (index 1-5)
@@ -957,13 +1109,28 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
     return result
 
 
+# Maps printer_type → serializer so _broadcast_status_change never needs isinstance.
+# Adding a new printer type = add one entry here; zero changes to method logic.
+_STATUS_SERIALIZERS = {
+    "bambu": lambda state, printer_id, model: printer_state_to_dict(state, printer_id, model),
+    "elegoo_centauri": lambda state, printer_id, model: _elegoo_state_to_dict(state, printer_id),
+    "moonraker": lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
+    "snapmaker_u1": lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
+}
+
+
 # Global printer manager instance
 printer_manager = PrinterManager()
 
 
 async def init_printer_connections(db: AsyncSession):
     """Initialize connections to all active printers."""
-    result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.is_active.is_(True))
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
     printers = result.scalars().all()
 
     for printer in printers:

@@ -18,6 +18,8 @@ from backend.app.models.oidc_provider import OIDCProvider, UserOIDCLink
 from backend.app.models.orca_base_cache import OrcaBaseProfile
 from backend.app.models.pending_upload import PendingUpload
 from backend.app.models.print_batch import PrintBatch
+from backend.app.models.bambu_printer_config import BambuPrinterConfig
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.printer import Printer
 from backend.app.models.project import Project
 from backend.app.models.settings import Settings
@@ -36,6 +38,8 @@ from backend.app.models.user_totp import UserTOTP
 
 __all__ = [
     "Printer",
+    "BambuPrinterConfig",
+    "MoonrakerPrinterConfig",
     "PrintArchive",
     "Filament",
     "Settings",

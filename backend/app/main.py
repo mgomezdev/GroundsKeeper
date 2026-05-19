@@ -47,6 +47,7 @@ from backend.app.api.routes import (
     pending_uploads,
     print_log,
     print_queue,
+    printer_profile_presets,
     printers,
     projects,
     settings as settings_routes,
@@ -655,8 +656,23 @@ _last_status_broadcast: dict[int, str] = {}
 _nozzle_count_updated: set[int] = set()
 
 
-async def on_printer_status_change(printer_id: int, state: PrinterState):
-    """Handle printer status changes - broadcast via WebSocket."""
+async def on_printer_status_change(printer_id: int, state):
+    """Handle printer status changes - broadcast via WebSocket.
+
+    Dispatches based on state type: Bambu PrinterState gets full processing
+    (notifications, dedup, etc.); Moonraker/Elegoo states get a slim broadcast.
+    """
+    from backend.app.services.elegoo_centauri_client import ElegooState
+    from backend.app.services.moonraker_client import MoonrakerState
+    from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
+
+    if isinstance(state, ElegooState):
+        await ws_manager.send_printer_status(printer_id, _elegoo_state_to_dict(state, printer_id))
+        return
+    if isinstance(state, MoonrakerState):
+        await ws_manager.send_printer_status(printer_id, _moonraker_state_to_dict(state, printer_id))
+        return
+
     # Only broadcast if something meaningful changed (reduce WebSocket spam)
     # Include rounded temperatures to detect meaningful temp changes (within 1 degree)
     temps = state.temperatures or {}
@@ -1018,12 +1034,18 @@ async def on_ams_change(printer_id: int, ams_data: list):
                     # MQTT was deferred). The moment any filament gets inserted
                     # — Bambu RFID, 3rd-party, or even an existing-but-now-
                     # reconfigured spool — fire the deferred configuration.
-                    # The "loaded" signal is `state == 11` (Bambu's "filament fed
-                    # to extruder" code), NOT tray_type — 3rd-party spools without
-                    # readable RFID report state=11 but tray_type="" because the
-                    # AMS sensor reads no filament metadata. Requiring a non-empty
-                    # tray_type would lock out the exact users this feature targets.
-                    if not fp_type.strip() and cur_state == 11 and assignment.spool:
+                    # The "loaded" signal is state == 11 (Bambu's "filament fed to
+                    # extruder" code) OR, on firmwares that don't use the state
+                    # enum meaningfully, a non-empty tray_type when state is
+                    # NOT one of the firmware's explicit empty signals (9, 10).
+                    # state-only was wrong for firmwares that never set 11 — A1
+                    # Mini BMCU 01.07.02.00 and P1S Standard AMS 00.00.06.75 both
+                    # always report state=3 — so the replay never fired for them
+                    # (#1322). The state ∉ {9,10} guard keeps the firmware's
+                    # explicit "empty" signals authoritative over any stale
+                    # tray_type that might survive the relay's auto-clearing.
+                    loaded = cur_state == 11 or (cur_state not in (9, 10) and cur_type.strip())
+                    if not fp_type.strip() and loaded and assignment.spool:
                         try:
                             from backend.app.api.routes.inventory import (
                                 apply_spool_to_slot_via_mqtt,
@@ -1342,9 +1364,10 @@ async def on_ams_change(printer_id: int, ams_data: list):
             if sync_mode and sync_mode != "auto":
                 return  # Only sync on auto mode
 
-            # Check if weight sync is disabled
-            disable_weight_sync_str = await get_setting(db, "spoolman_disable_weight_sync")
-            disable_weight_sync = disable_weight_sync_str and disable_weight_sync_str.lower() == "true"
+            # `spoolman_disable_weight_sync` is deprecated (#1119) — weight is now
+            # always owned by per-print tracking, never by AMS auto-sync. The
+            # setting is still read by the settings UI for backwards compat but
+            # has no effect on the sync path here.
 
             # Get Spoolman URL
             spoolman_url = await get_setting(db, "spoolman_url")
@@ -1450,7 +1473,10 @@ async def on_ams_change(printer_id: int, ams_data: list):
                         result = await client.sync_ams_tray(
                             tray,
                             printer_name,
-                            disable_weight_sync=disable_weight_sync,
+                            # Per-print tracking is the only weight writer (#1119).
+                            # AMS auto-sync still maintains spool metadata / slot
+                            # assignments but no longer touches remaining_weight.
+                            disable_weight_sync=True,
                             cached_spools=cached_spools,
                             inventory_remaining=inv_remaining,
                             spoolman_spool_id_hint=hint,
@@ -1980,6 +2006,24 @@ async def on_print_start(printer_id: int, data: dict):
                 _active_prints[(printer_id, archive.filename)] = archive.id
                 if subtask_name:
                     _active_prints[(printer_id, f"{subtask_name}.3mf")] = archive.id
+
+                # Start timelapse session if external camera is enabled (#1353).
+                # The two new-archive paths below also call start_session, but
+                # queue / VP-dispatched prints land here in the expected-archive
+                # branch and used to skip it entirely — so the timelapse session
+                # never started, no frames were captured, and the post-print
+                # stitch silently returned None.
+                if printer.external_camera_enabled and printer.external_camera_url:
+                    from backend.app.services.layer_timelapse import start_session
+
+                    start_session(
+                        printer_id,
+                        archive.id,
+                        printer.external_camera_url,
+                        printer.external_camera_type or "mjpeg",
+                        snapshot_url=printer.external_camera_snapshot_url,
+                    )
+                    logger.info("Started layer timelapse for printer %s, expected archive %s", printer_id, archive.id)
 
                 # Inject ams_mapping into usage tracker session — the session was created
                 # before expected-print promotion, so it may have ams_mapping=None when
@@ -4201,7 +4245,9 @@ async def track_printer_runtime():
                 new_runtime = runtime_secs
                 new_last_update = last_update
 
-                if state.state in ("RUNNING", "PAUSE"):
+                client = printer_manager.get_client(pid)
+                actively_printing = client.is_printing if client else False
+                if actively_printing:
                     if last_update:
                         lu = last_update if last_update.tzinfo else last_update.replace(tzinfo=timezone.utc)
                         elapsed = (now - lu).total_seconds()
@@ -5189,6 +5235,7 @@ app.include_router(bug_report.router, prefix=app_settings.api_prefix)
 app.include_router(users.router, prefix=app_settings.api_prefix)
 app.include_router(groups.router, prefix=app_settings.api_prefix)
 app.include_router(printers.router, prefix=app_settings.api_prefix)
+app.include_router(printer_profile_presets.router, prefix=app_settings.api_prefix)
 app.include_router(archives.router, prefix=app_settings.api_prefix)
 app.include_router(filaments.router, prefix=app_settings.api_prefix)
 app.include_router(inventory.router, prefix=app_settings.api_prefix)

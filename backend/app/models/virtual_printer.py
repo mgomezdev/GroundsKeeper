@@ -35,5 +35,9 @@ class VirtualPrinter(Base):
     )  # opt-in: user must explicitly enable; auto-detect only runs then
     serial_suffix: Mapped[str] = mapped_column(String(9), default="391800001")  # unique per printer
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Printer protocol type for this virtual printer ("bambu" = MQTT/FTP, "elegoo_centauri" = SDCP/HTTP)
+    printer_type: Mapped[str] = mapped_column(String(20), default="bambu")
+    # SDCP port override for elegoo_centauri virtual printers (default 3030)
+    sdcp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

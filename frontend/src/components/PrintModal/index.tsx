@@ -1067,7 +1067,12 @@ export function PrintModal({
 
             {/* Print options */}
             {(mode === 'reprint' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
-              <PrintOptionsPanel options={printOptions} onChange={setPrintOptions} defaultExpanded={!!initialSelectedPrinterIds?.length} />
+              <PrintOptionsPanel
+                options={printOptions}
+                onChange={setPrintOptions}
+                defaultExpanded={!!initialSelectedPrinterIds?.length}
+                capabilities={selectedPrinters.length === 1 ? printerStatus?.capabilities : undefined}
+              />
             )}
 
             {/* Quantity — create multiple copies (batch). Hidden for multi-printer selection. */}

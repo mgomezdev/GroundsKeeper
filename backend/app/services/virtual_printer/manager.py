@@ -217,9 +217,18 @@ class VirtualPrinterInstance:
         else:
             await self._queue_file(file_path, source_ip)
 
-        # Reset MQTT status back to IDLE
+        # Signal job completion to the slicer. Send-flow slicers don't watch the
+        # post-upload state and would be happy with anything; the Print flow
+        # (intended for proxy-mode VPs, but users sometimes click it against
+        # queue/immediate/review modes too — #1280) watches the gcode_state
+        # cycle and only releases its in-flight-job lock when it sees FINISH.
+        # Going PREPARE → IDLE wedges the slicer's UI at "Downloading...(0%)"
+        # and blocks the next dispatch with "busy with another print job".
+        # PREPARE → FINISH satisfies both flows. prepare_percent=100 also
+        # unfreezes the slicer's "Downloading X%" progress bar which it ticks
+        # against the same field during the upload window.
         if self._mqtt and file_path.suffix.lower() == ".3mf":
-            self._mqtt.set_gcode_state("IDLE")
+            self._mqtt.set_gcode_state("FINISH", filename=file_path.name, prepare_percent="100")
 
     async def on_print_command(self, filename: str, data: dict) -> None:
         """Handle print command from MQTT."""
@@ -260,6 +269,7 @@ class VirtualPrinterInstance:
                 )
                 if archive:
                     logger.info("[VP %s] Archived: %s - %s", self.name, archive.id, archive.print_name)
+                    await self._broadcast_archive_created(archive)
                     try:
                         file_path.unlink()
                     except OSError:
@@ -345,6 +355,20 @@ class VirtualPrinterInstance:
             async with self._session_factory() as db:
                 name_source = await get_setting(db, "virtual_printer_archive_name_source")
                 prefer_filename = name_source == "filename"
+
+                # Read workflow defaults from settings. Without this the
+                # PrintQueueItem below would fall back to the column-level
+                # defaults and ignore the user's workflow preferences (#1235).
+                # Fallbacks match AppSettings defaults in schemas/settings.py.
+                def _bool_setting(value: str | None, default: bool) -> bool:
+                    return value.lower() == "true" if value is not None else default
+
+                bed_levelling = _bool_setting(await get_setting(db, "default_bed_levelling"), True)
+                flow_cali = _bool_setting(await get_setting(db, "default_flow_cali"), False)
+                vibration_cali = _bool_setting(await get_setting(db, "default_vibration_cali"), True)
+                layer_inspect = _bool_setting(await get_setting(db, "default_layer_inspect"), False)
+                timelapse = _bool_setting(await get_setting(db, "default_timelapse"), False)
+
                 service = ArchiveService(db)
                 archive = await service.archive_print(
                     printer_id=None,
@@ -405,10 +429,16 @@ class VirtualPrinterInstance:
                         manual_start=not self.auto_dispatch,
                         required_filament_types=required_filament_types_json,
                         filament_overrides=filament_overrides_json,
+                        bed_levelling=bed_levelling,
+                        flow_cali=flow_cali,
+                        vibration_cali=vibration_cali,
+                        layer_inspect=layer_inspect,
+                        timelapse=timelapse,
                     )
                     db.add(queue_item)
                     await db.commit()
                     logger.info("[VP %s] Added to queue: %s", self.name, queue_item.id)
+                    await self._broadcast_archive_created(archive)
                     try:
                         file_path.unlink()
                     except OSError:
@@ -418,6 +448,28 @@ class VirtualPrinterInstance:
                     logger.error("Failed to archive file: %s", file_path.name)
         except Exception as e:
             logger.error("Error adding to print queue: %s", e)
+
+    async def _broadcast_archive_created(self, archive) -> None:
+        """Notify connected clients that a new archive exists.
+
+        Real-printer prints get this from main.py's MQTT print_start handler;
+        VP-uploaded prints need their own broadcast or the Archives page stays
+        stale until the user switches tabs (#1282).
+        """
+        try:
+            from backend.app.core.websocket import ws_manager
+
+            await ws_manager.send_archive_created(
+                {
+                    "id": archive.id,
+                    "printer_id": archive.printer_id,
+                    "filename": archive.filename,
+                    "print_name": archive.print_name,
+                    "status": archive.status,
+                }
+            )
+        except Exception as e:
+            logger.debug("[VP %s] archive_created broadcast failed: %s", self.name, e)
 
     @staticmethod
     def _extract_plate_id(file_path: Path) -> int | None:
@@ -822,6 +874,11 @@ class VirtualPrinterManager:
             if vp.id in self._instances:
                 continue
 
+            vp_printer_type = getattr(vp, "printer_type", "bambu") or "bambu"
+            if vp_printer_type == "elegoo_centauri":
+                await self._start_centauri_instance(vp)
+                continue
+
             if vp.mode == "proxy":
                 ip_info = proxy_ips.get(vp.id)
                 if not ip_info:
@@ -869,11 +926,33 @@ class VirtualPrinterManager:
                 await instance.start_server()
                 logger.info("Started server-mode VP: %s on %s", instance.name, vp.bind_ip)
 
+    async def _start_centauri_instance(self, vp) -> None:
+        from backend.app.services.virtual_printer.centauri_server import CentauriVirtualInstance
+
+        sdcp_port = getattr(vp, "sdcp_port", None) or 3030
+        upload_dir = self._base_dir / "uploads" / str(vp.id)
+        instance = CentauriVirtualInstance(
+            vp_id=vp.id,
+            name=vp.name,
+            mode=vp.mode,
+            sdcp_port=sdcp_port,
+            bind_ip=vp.bind_ip or "0.0.0.0",
+            target_printer_id=vp.target_printer_id,
+            auto_dispatch=vp.auto_dispatch,
+            queue_force_color_match=vp.queue_force_color_match,
+            upload_dir=upload_dir,
+            session_factory=self._session_factory,
+            printer_manager=self._printer_manager,
+        )
+        self._instances[vp.id] = instance
+        await instance.start_server()
+        logger.info("Started Centauri VP: %s on port %d", instance.name, sdcp_port)
+
     async def remove_instance(self, vp_id: int) -> None:
         """Stop and remove a single VP instance."""
         instance = self._instances.pop(vp_id, None)
         if instance:
-            if instance.is_proxy:
+            if hasattr(instance, "is_proxy") and instance.is_proxy:
                 await instance.stop_proxy()
             else:
                 await instance.stop_server()

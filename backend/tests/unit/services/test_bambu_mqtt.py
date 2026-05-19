@@ -338,6 +338,9 @@ class TestRealisticMessageFlow:
 
         mqtt_client.on_print_start = on_start
         mqtt_client.on_print_complete = on_complete
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         # 1. Print starts with timelapse
         mqtt_client._process_message(
@@ -1603,6 +1606,9 @@ class TestRequestTopicAmsMapping:
 
         mqtt_client.on_print_start = on_start
         mqtt_client._captured_ams_mapping = [0, 4, -1, -1]
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         # Trigger print start
         mqtt_client._process_message(
@@ -1625,6 +1631,9 @@ class TestRequestTopicAmsMapping:
             start_data.update(data)
 
         mqtt_client.on_print_start = on_start
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         mqtt_client._process_message(
             {
@@ -1638,6 +1647,48 @@ class TestRequestTopicAmsMapping:
 
         assert "ams_mapping" in start_data
         assert start_data["ams_mapping"] is None
+
+    def test_first_running_push_after_bambuddy_restart_does_not_fire_print_start(self, mqtt_client):
+        """Regression for #1304: Bambuddy restart mid-print misfired plate check + archive.
+
+        When Bambuddy restarts while a print is already in progress, the freshly
+        constructed BambuMQTTClient has `_previous_gcode_state = None`. The first
+        push_status the printer sends reports `gcode_state: RUNNING`. Before the
+        fix, the (None → RUNNING) transition satisfied is_new_print's guard and
+        fired on_print_start, which then ran plate detection (objects on plate →
+        paused the live print) AND re-archived the file (duplicate archive).
+
+        With the fix in place the on_print_start callback must NOT be called for
+        this catch-up push, but `_was_running` still tracks the print so
+        completion detection works the same way as before.
+        """
+        start_data = {}
+
+        def on_start(data):
+            start_data.update(data)
+
+        mqtt_client.on_print_start = on_start
+        # Explicit: this simulates a fresh Bambuddy process attaching to a
+        # printer that's already in the middle of a print.
+        mqtt_client._previous_gcode_state = None
+        mqtt_client._was_running = False
+
+        mqtt_client._process_message(
+            {
+                "print": {
+                    "gcode_state": "RUNNING",
+                    "gcode_file": "/data/Metadata/big_print.gcode",
+                    "subtask_name": "big_print",
+                }
+            }
+        )
+
+        assert start_data == {}, "on_print_start must not fire on Bambuddy-restart catch-up"
+        # Completion detection still needs to know we're tracking a running job.
+        assert mqtt_client._was_running is True
+        # And the state-update bookkeeping ran so the NEXT push won't keep
+        # treating the first RUNNING as fresh.
+        assert mqtt_client._previous_gcode_state == "RUNNING"
 
     def test_print_complete_callback_includes_ams_mapping(self, mqtt_client):
         """on_print_complete callback data includes captured ams_mapping."""
@@ -4668,3 +4719,356 @@ class TestAmsLoadFilamentEncoding:
         mqtt_client.state.connected = False
         assert mqtt_client.ams_load_filament(0) is False
         mqtt_client._client.publish.assert_not_called()
+
+
+class TestAmsFilamentSettingExternalSpoolEncoding:
+    """Encoding of `ams_filament_setting` / `reset_ams_slot` for the external spool.
+
+    Regression coverage for #1279. The encoding is verified against a captured
+    BambuStudio → X1C exchange (May 2026):
+
+        REQ {"command":"ams_filament_setting","ams_id":255,"tray_id":254,"slot_id":0,...}
+        REP {"result":"success",...}
+
+    The previous code sent `tray_id: 0` for the single-external case, which the
+    P1S in #1279 rejected with `result: "fail"`.
+    """
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    def _published(self, mqtt_client):
+        call_args = mqtt_client._client.publish.call_args
+        return json.loads(call_args[0][1])["print"]
+
+    def test_single_external_uses_tray_id_254(self, mqtt_client):
+        """X1C/P1S/A1 (single external slot): ams_id=255, tray_id=254, slot_id=0."""
+        # Simulate a single-external printer: vt_tray is a single-element list.
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "255"}]}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=255,
+            tray_id=0,
+            tray_info_idx="GFL99",
+            tray_type="PLA",
+            tray_sub_brands="Generic PLA",
+            tray_color="000000FF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["command"] == "ams_filament_setting"
+        assert cmd["ams_id"] == 255
+        assert cmd["tray_id"] == 254, (
+            "Single-external `ams_filament_setting` must send tray_id=254 "
+            "(verified via BambuStudio→X1C capture). Sending tray_id=0 "
+            "is what the P1S in #1279 rejects."
+        )
+        assert cmd["slot_id"] == 0
+
+    def test_single_external_reset_uses_tray_id_254(self, mqtt_client):
+        """reset_ams_slot shares the convention — same encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "255"}]}
+
+        assert mqtt_client.reset_ams_slot(ams_id=255, tray_id=0)
+
+        cmd = self._published(mqtt_client)
+        assert cmd["command"] == "ams_filament_setting"
+        assert cmd["ams_id"] == 255
+        assert cmd["tray_id"] == 254
+        assert cmd["slot_id"] == 0
+        # Reset clears the filament identity
+        assert cmd["tray_info_idx"] == ""
+        assert cmd["tray_type"] == ""
+
+    def test_regular_ams_tray_unchanged(self, mqtt_client):
+        """Regular AMS slots (ams_id <= 3) keep their existing encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": []}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=0,
+            tray_id=2,
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["ams_id"] == 0
+        assert cmd["tray_id"] == 2
+        assert cmd["slot_id"] == 2
+
+    def test_ams_ht_unchanged(self, mqtt_client):
+        """AMS-HT (ams_id >= 128) keeps its single-tray-per-unit encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": []}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=128,
+            tray_id=0,
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["ams_id"] == 128
+        assert cmd["tray_id"] == 0
+        assert cmd["slot_id"] == 0
+
+    def test_dual_external_left_keeps_legacy_encoding(self, mqtt_client):
+        """H2D dual-external (`vt_tray` length > 1): not in the X1C capture, so
+        left at the legacy `mqtt_tray_id = 0` until verified separately."""
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "254"}, {"id": "255"}]}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=255,
+            tray_id=0,  # Ext-L
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        # Ext-L → mqtt_ams_id = 254
+        assert cmd["ams_id"] == 254
+        # tray_id stays at 0 for dual external; this pins current behavior so
+        # a future capture-driven change shows up in the diff.
+        assert cmd["tray_id"] == 0
+        assert cmd["slot_id"] == 0
+
+
+# =============================================================================
+# Print control methods
+# =============================================================================
+
+
+class TestBambuPrintControl:
+    """Tests for stop / pause / resume / gcode control methods."""
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    # ── stop ─────────────────────────────────────────────────────────────────
+
+    def test_stop_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.stop_print() is False
+
+    def test_stop_print_publishes_stop_command(self, mqtt_client):
+        result = mqtt_client.stop_print()
+
+        assert result is True
+        mqtt_client._client.publish.assert_called_once()
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "stop"
+
+    # ── pause ────────────────────────────────────────────────────────────────
+
+    def test_pause_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.pause_print() is False
+
+    def test_pause_print_publishes_pause_command(self, mqtt_client):
+        result = mqtt_client.pause_print()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "pause"
+
+    # ── resume ───────────────────────────────────────────────────────────────
+
+    def test_resume_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.resume_print() is False
+
+    def test_resume_print_publishes_resume_command(self, mqtt_client):
+        result = mqtt_client.resume_print()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "resume"
+
+    # ── print speed ───────────────────────────────────────────────────────────
+
+    def test_set_print_speed_valid_modes(self, mqtt_client):
+        for mode in (1, 2, 3, 4):
+            mqtt_client._client.publish.reset_mock()
+            result = mqtt_client.set_print_speed(mode)
+            assert result is True
+            payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+            assert payload["print"]["command"] == "print_speed"
+            assert payload["print"]["param"] == str(mode)
+
+    def test_set_print_speed_invalid_returns_false(self, mqtt_client):
+        assert mqtt_client.set_print_speed(0) is False
+        assert mqtt_client.set_print_speed(5) is False
+        mqtt_client._client.publish.assert_not_called()
+
+    # ── gcode ─────────────────────────────────────────────────────────────────
+
+    def test_send_gcode_publishes_gcode_line(self, mqtt_client):
+        result = mqtt_client.send_gcode("G28")
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "gcode_line"
+        assert payload["print"]["param"] == "G28"
+
+    def test_send_gcode_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.send_gcode("G28") is False
+
+    # ── home (ABC default → send_gcode G28) ──────────────────────────────────
+
+    def test_home_sends_g28_via_gcode_line(self, mqtt_client):
+        result = mqtt_client.home()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "gcode_line"
+        assert "G28" in payload["print"]["param"]
+
+
+# =============================================================================
+# Chamber light
+# =============================================================================
+
+
+class TestBambuChamberLight:
+    """Tests for set_chamber_light — must publish for both LED nodes."""
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    def test_chamber_light_on_publishes_twice(self, mqtt_client):
+        result = mqtt_client.set_chamber_light(True)
+
+        assert result is True
+        assert mqtt_client._client.publish.call_count == 2
+
+    def test_chamber_light_on_both_nodes_set_to_on(self, mqtt_client):
+        mqtt_client.set_chamber_light(True)
+
+        nodes = set()
+        for call in mqtt_client._client.publish.call_args_list:
+            payload = json.loads(call[0][1])
+            nodes.add(payload["system"]["led_node"])
+            assert payload["system"]["led_mode"] == "on"
+        assert nodes == {"chamber_light", "chamber_light2"}
+
+    def test_chamber_light_off_both_nodes_set_to_off(self, mqtt_client):
+        mqtt_client.set_chamber_light(False)
+
+        for call in mqtt_client._client.publish.call_args_list:
+            payload = json.loads(call[0][1])
+            assert payload["system"]["led_mode"] == "off"
+
+    def test_chamber_light_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.set_chamber_light(True) is False
+
+
+# =============================================================================
+# Capabilities
+# =============================================================================
+
+
+class TestBambuCapabilities:
+
+    @pytest.fixture
+    def caps(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        return BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678").get_capabilities()
+
+    def test_chamber_light_true(self, caps):
+        assert caps.chamber_light is True
+
+    def test_pause_resume_true(self, caps):
+        assert caps.pause_resume is True
+
+    def test_bed_levelling_true(self, caps):
+        assert caps.bed_levelling is True
+
+    def test_timelapse_true(self, caps):
+        assert caps.timelapse is True
+
+    def test_ams_true(self, caps):
+        assert caps.ams is True
+
+    def test_gcode_true(self, caps):
+        assert caps.gcode is True
+
+    def test_multi_nozzle_true_for_h2d(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678", model="H2D")
+        assert client.get_capabilities().multi_nozzle is True
+
+    def test_multi_nozzle_false_for_x1c(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678", model="X1C")
+        assert client.get_capabilities().multi_nozzle is False
+
+    def test_multi_nozzle_false_when_no_model(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert client.get_capabilities().multi_nozzle is False

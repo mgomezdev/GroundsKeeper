@@ -172,7 +172,7 @@ export function StreamOverlayPage() {
   useEffect(() => {
     document.title = printer ? `${printer.name} - ${t('streamOverlay.title')}` : t('streamOverlay.title');
     return () => {
-      document.title = 'Bambuddy';
+      document.title = 'GroundsKeeper';
     };
   }, [printer, t]);
 
@@ -217,7 +217,7 @@ export function StreamOverlayPage() {
         />
       )}
 
-      {/* Bambuddy logo - top right */}
+      {/* GroundsKeeper logo - top right */}
       <a
         href="https://github.com/maziggy/bambuddy"
         target="_blank"
@@ -225,8 +225,8 @@ export function StreamOverlayPage() {
         className="absolute top-4 right-4 z-10"
       >
         <img
-          src="/img/bambuddy_logo_dark_transparent.png"
-          alt="Bambuddy"
+          src="/img/groundskeeper_logo_dark_transparent.svg"
+          alt="GroundsKeeper"
           className={`${sizes.logoHeight} object-contain drop-shadow-lg hover:scale-105 transition-transform`}
         />
       </a>

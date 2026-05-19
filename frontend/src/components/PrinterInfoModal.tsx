@@ -126,7 +126,7 @@ export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: 
     value: (
       <span className="flex items-center">
         <span className="font-mono truncate">{printer.serial_number}</span>
-        <CopyButton value={printer.serial_number} />
+        <CopyButton value={printer.serial_number ?? ''} />
       </span>
     ),
   });

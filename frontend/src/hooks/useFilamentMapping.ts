@@ -79,6 +79,27 @@ export function buildLoadedFilaments(printerStatus: PrinterStatus | undefined): 
     }
   }
 
+  // Single-spool printer: no AMS and no vt_tray reported (e.g. Elegoo Centauri Carbon).
+  // Add a wildcard external slot so the user can declare they'll have filament loaded.
+  if (filaments.length === 0 && printerStatus !== undefined) {
+    filaments.push({
+      type: '',
+      color: '',
+      colorName: 'Any',
+      amsId: -1,
+      trayId: 0,
+      isHt: false,
+      isExternal: true,
+      isWildcard: true,
+      label: 'External spool',
+      globalTrayId: 254,
+      trayInfoIdx: '',
+      traySubBrands: '',
+      extruderId: undefined,
+      remain: -1,
+    });
+  }
+
   return filaments;
 }
 
@@ -182,24 +203,32 @@ export function computeAmsMapping(
     if (!idxMatch && !exactMatch && !similarMatch && !typeOnlyMatch) {
       exactMatch = available.find(
         (f) =>
+          !f.isWildcard &&
           f.type?.toUpperCase() === req.type?.toUpperCase() &&
           normalizeColorForCompare(f.color) === normalizeColorForCompare(req.color)
       );
       if (!exactMatch) {
         similarMatch = available.find(
           (f) =>
+            !f.isWildcard &&
             f.type?.toUpperCase() === req.type?.toUpperCase() &&
             colorsAreSimilar(f.color, req.color)
         );
       }
       if (!exactMatch && !similarMatch) {
         typeOnlyMatch = available.find(
-          (f) => f.type?.toUpperCase() === req.type?.toUpperCase()
+          (f) => !f.isWildcard && f.type?.toUpperCase() === req.type?.toUpperCase()
         );
       }
     }
 
-    const loaded = idxMatch || exactMatch || similarMatch || typeOnlyMatch || undefined;
+    // Wildcard slot (single-spool printer): matches any filament as last resort
+    const wildcardMatch =
+      !idxMatch && !exactMatch && !similarMatch && !typeOnlyMatch
+        ? available.find((f) => f.isWildcard)
+        : undefined;
+
+    const loaded = idxMatch || exactMatch || similarMatch || typeOnlyMatch || wildcardMatch || undefined;
 
     // Mark this tray as used so it won't be assigned to another slot
     if (loaded) {
@@ -250,6 +279,8 @@ export interface LoadedFilament {
   extruderId?: number;
   /** Remaining filament percentage (0-100), -1 = unknown */
   remain: number;
+  /** True for the synthetic external slot added for single-spool printers that don't report filament state */
+  isWildcard?: boolean;
 }
 
 /**
@@ -442,24 +473,32 @@ export function useFilamentMapping(
       if (!idxMatch && !exactMatch && !similarMatch && !typeOnlyMatch) {
         exactMatch = available.find(
           (f) =>
+            !f.isWildcard &&
             f.type?.toUpperCase() === req.type?.toUpperCase() &&
             normalizeColorForCompare(f.color) === normalizeColorForCompare(req.color)
         );
         if (!exactMatch) {
           similarMatch = available.find(
             (f) =>
+              !f.isWildcard &&
               f.type?.toUpperCase() === req.type?.toUpperCase() &&
               colorsAreSimilar(f.color, req.color)
           );
         }
         if (!exactMatch && !similarMatch) {
           typeOnlyMatch = available.find(
-            (f) => f.type?.toUpperCase() === req.type?.toUpperCase()
+            (f) => !f.isWildcard && f.type?.toUpperCase() === req.type?.toUpperCase()
           );
         }
       }
 
-      const loaded = idxMatch || exactMatch || similarMatch || typeOnlyMatch || undefined;
+      // Wildcard slot (single-spool printer): matches any filament as last resort
+      const wildcardMatch =
+        !idxMatch && !exactMatch && !similarMatch && !typeOnlyMatch
+          ? available.find((f) => f.isWildcard)
+          : undefined;
+
+      const loaded = idxMatch || exactMatch || similarMatch || typeOnlyMatch || wildcardMatch || undefined;
 
       // Mark this tray as used so it won't be assigned to another slot
       if (loaded) {
@@ -472,10 +511,11 @@ export function useFilamentMapping(
       const colorMatch = !!idxMatch || !!exactMatch || !!similarMatch;
 
       // Status: match (tray_info_idx, type+color, or similar color), type_only (type ok, color very different), mismatch (type not found)
+      // Wildcard match (single-spool declaration) is treated as type_only — we trust the user will load the right type.
       let status: FilamentStatus;
       if (idxMatch || exactMatch || similarMatch) {
         status = 'match';
-      } else if (typeOnlyMatch) {
+      } else if (typeOnlyMatch || wildcardMatch) {
         status = 'type_only';
       } else {
         status = 'mismatch';

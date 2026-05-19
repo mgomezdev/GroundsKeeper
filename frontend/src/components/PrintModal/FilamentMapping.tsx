@@ -232,6 +232,13 @@ export function FilamentMapping({
                       f.extruderId === item.nozzle_id,
                   )
                   .map((f) => {
+                    if (f.isWildcard) {
+                      return (
+                        <option key={f.globalTrayId} value={f.globalTrayId} className="bg-bambu-dark text-white">
+                          {f.label} — declare filament loaded at print time
+                        </option>
+                      );
+                    }
                     const remainingWeight = trayRemainingWeightMap.get(f.globalTrayId);
                     const remainingLabel = remainingWeight != null
                       ? t('printModal.slotRemainingShort', {
@@ -276,8 +283,13 @@ export function FilamentMapping({
               {totalCost > 0 || hasAnyCost ? `${currencySymbol}${totalCost.toFixed(2)}` : 'N/A'}
             </span>
           </div>
-          {hasTypeMismatch && (
+          {hasTypeMismatch && !filamentComparison.some((f) => f.loaded?.isWildcard) && (
             <p className="text-xs text-orange-400 mt-2">Required filament type not found in printer.</p>
+          )}
+          {filamentComparison.some((f) => f.loaded?.isWildcard) && (
+            <p className="text-xs text-yellow-400 mt-2">
+              Single-spool printer — no filament state reported. Make sure the correct filament is loaded before printing.
+            </p>
           )}
         </div>
       )}

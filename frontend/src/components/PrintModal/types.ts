@@ -1,4 +1,4 @@
-import type { PrintQueueItem, Printer } from '../../api/client';
+import type { PrintQueueItem, Printer, PrinterCapabilities } from '../../api/client';
 
 /**
  * Mode of operation for the PrintModal.
@@ -203,6 +203,8 @@ export interface PrintOptionsProps {
   options: PrintOptions;
   onChange: (options: PrintOptions) => void;
   defaultExpanded?: boolean;
+  /** Capabilities from the selected printer — options unsupported by the printer are shown disabled */
+  capabilities?: PrinterCapabilities | null;
 }
 
 /**

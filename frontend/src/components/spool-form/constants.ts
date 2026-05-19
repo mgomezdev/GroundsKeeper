@@ -18,6 +18,11 @@ export const DEFAULT_BRANDS = [
 // Known filament variants/subtypes
 export const KNOWN_VARIANTS = [
   'Basic', 'Matte', 'Silk', 'Silk+', 'Tough', 'Tough+', 'HF', 'High Flow', 'Engineering',
+  // CF (Carbon Fiber) / GF (Glass Fiber) — match Bambu's PETG-CF / PA6-GF /
+  // ABS-GF naming so users adding a third-party CF/GF spool can pick the
+  // base material + subtype here instead of needing a -CF Material entry
+  // (#1345).
+  'CF', 'GF',
   'Galaxy', 'Glow', 'Marble', 'Metal', 'Rainbow', 'Sparkle', 'Wood',
   'Translucent', 'Transparent', 'Clear', 'Lite', 'Pro', 'Plus', 'Max',
   'Super', 'Ultra', 'Flex', 'Soft', 'Hard', 'Strong', 'Impact',
@@ -97,5 +102,5 @@ export const EXTENDED_COLORS: ColorPreset[] = [
 export const ALL_COLORS: ColorPreset[] = [...QUICK_COLORS, ...EXTENDED_COLORS];
 
 // Local storage keys
-export const RECENT_COLORS_KEY = 'bambuddy-recent-colors';
+export const RECENT_COLORS_KEY = 'groundskeeper-recent-colors';
 export const MAX_RECENT_COLORS = 8;

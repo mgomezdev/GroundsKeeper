@@ -54,6 +54,7 @@ import {
   ClipboardList,
   Zap,
   Cog,
+  Archive as ArchiveIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { SliceModal } from '../components/SliceModal';
@@ -180,6 +181,9 @@ function ArchiveCard({
   const [showReprint, setShowReprint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1343: when true, the delete also drops the row from Quick Stats. Default
+  // off — soft delete preserves the archive's filament/time/cost contribution.
+  const [deletePurgeStats, setDeletePurgeStats] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showTimelapse, setShowTimelapse] = useState(false);
   const [showTimelapseSelect, setShowTimelapseSelect] = useState(false);
@@ -339,7 +343,7 @@ function ArchiveCard({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteArchive(archive.id),
+    mutationFn: (purgeStats: boolean) => api.deleteArchive(archive.id, purgeStats),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['archives'] });
       showToast(t('archives.toast.archiveDeleted'));
@@ -1251,11 +1255,27 @@ function ArchiveCard({
           confirmText={t('archives.modal.deleteButton')}
           variant="danger"
           onConfirm={() => {
-            deleteMutation.mutate();
+            deleteMutation.mutate(deletePurgeStats);
             setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
           }}
-          onCancel={() => setShowDeleteConfirm(false)}
-        />
+          onCancel={() => {
+            setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
+          }}
+        >
+          {/* #1343: opt-in checkbox — by default the archive is soft-deleted,
+              so its filament / time / cost contribution stays in Quick Stats. */}
+          <label className="flex items-start gap-2 cursor-pointer text-sm text-bambu-gray">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-red-500"
+              checked={deletePurgeStats}
+              onChange={(e) => setDeletePurgeStats(e.target.checked)}
+            />
+            <span>{t('archives.modal.deletePurgeStats')}</span>
+          </label>
+        </ConfirmModal>
       )}
 
       {/* Delete Source 3MF Confirmation */}
@@ -1506,6 +1526,9 @@ function ArchiveListRow({
   const { hasPermission, canModify } = useAuth();
   const [showEdit, setShowEdit] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1343: opt-in "Also remove from statistics" checkbox state. Default off
+  // — soft delete keeps the archive's contribution to Quick Stats.
+  const [deletePurgeStats, setDeletePurgeStats] = useState(false);
   const navigate = useNavigate();
   const [showReprint, setShowReprint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
@@ -1644,7 +1667,7 @@ function ArchiveListRow({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteArchive(archive.id),
+    mutationFn: (purgeStats: boolean) => api.deleteArchive(archive.id, purgeStats),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['archives'] });
       showToast(t('archives.toast.archiveDeleted'));
@@ -2203,11 +2226,27 @@ function ArchiveListRow({
           confirmText={t('archives.modal.deleteButton')}
           variant="danger"
           onConfirm={() => {
-            deleteMutation.mutate();
+            deleteMutation.mutate(deletePurgeStats);
             setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
           }}
-          onCancel={() => setShowDeleteConfirm(false)}
-        />
+          onCancel={() => {
+            setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
+          }}
+        >
+          {/* #1343: opt-in checkbox — by default the archive is soft-deleted,
+              so its filament / time / cost contribution stays in Quick Stats. */}
+          <label className="flex items-start gap-2 cursor-pointer text-sm text-bambu-gray">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-red-500"
+              checked={deletePurgeStats}
+              onChange={(e) => setDeletePurgeStats(e.target.checked)}
+            />
+            <span>{t('archives.modal.deletePurgeStats')}</span>
+          </label>
+        </ConfirmModal>
       )}
 
       {/* Delete Source 3MF Confirmation */}
@@ -3076,10 +3115,18 @@ export function ArchivesPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-white">Archives</h1>
+          <div className="flex items-start gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+                <ArchiveIcon className="w-7 h-7 text-bambu-green" />
+                Archives
+              </h1>
+              <p className="text-bambu-gray mt-1">
+                {filteredArchives?.length || 0} of {archives?.length || 0} prints
+              </p>
+            </div>
             <select
-              className="px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray-light text-sm focus:border-bambu-green focus:outline-none"
+              className="mt-0.5 px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray-light text-sm focus:border-bambu-green focus:outline-none"
               value={collection}
               onChange={(e) => setCollection(e.target.value as Collection)}
             >
@@ -3090,9 +3137,6 @@ export function ArchivesPage() {
               ))}
             </select>
           </div>
-          <p className="text-bambu-gray">
-            {filteredArchives?.length || 0} of {archives?.length || 0} prints
-          </p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Export dropdown */}

@@ -207,7 +207,16 @@ def _first_scalar(value: object) -> str | None:
 
 
 async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPreset]]:
-    """Standard slicer-bundled profiles via the sidecar's /profiles/bundled."""
+    """Standard slicer-bundled profiles from the preferred sidecar.
+
+    Queries the user's configured preferred sidecar (OrcaSlicer or BambuStudio)
+    and returns its bundled profiles as the Standard tier. Non-Bambu profiles
+    (Elegoo, Snapmaker, etc.) appear naturally when OrcaSlicer is the preferred
+    slicer, because OrcaSlicer bundles them. Setting ``preferred_slicer`` to
+    ``orcaslicer`` is the correct way to expose those profiles — routing them
+    through a secondary sidecar would cause slice dispatch to fail, since the
+    profile stub is always sent to the preferred slicer for resolution.
+    """
     global _bundled_cache
     now = time.monotonic()
     if _bundled_cache and now - _bundled_cache[0] < _BUNDLED_TTL_S:
@@ -215,15 +224,13 @@ async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPres
 
     api_url = await _resolve_slicer_api_url(db)
     if not api_url:
-        # No sidecar configured at all — return empty rather than caching, so
-        # users who configure one mid-session see results on next open.
         return _empty_slots()
 
     try:
         async with SlicerApiService(base_url=api_url) as svc:
             raw = await svc.list_bundled_profiles()
     except SlicerApiError as e:
-        logger.info("Bundled preset fetch from sidecar at %s failed: %s", api_url, e)
+        logger.info("Bundled preset fetch failed: %s", e)
         return _empty_slots()
     except Exception as e:  # noqa: BLE001 — never break the modal on sidecar issues
         logger.warning("Bundled preset fetch unexpected error: %s", e)
@@ -235,47 +242,35 @@ async def _fetch_bundled_presets(db: AsyncSession) -> dict[str, list[UnifiedPres
             name = entry.get("name")
             if not name:
                 continue
-            # Bundled presets are addressed by name (the slicer resolves them
-            # by name during the `inherits:` walk), so name doubles as id.
-            extra: dict[str, str | None] = {}
+            extra: dict = {}
             if slot == "filament":
                 extra["filament_type"] = entry.get("filament_type")
                 extra["filament_colour"] = entry.get("filament_colour")
-            slots[slot].append(
-                UnifiedPreset(id=name, name=name, source="standard", **extra),
-            )
+            cp = entry.get("compatible_printers")
+            if isinstance(cp, list) and cp:
+                extra["compatible_printers"] = cp
+            slots[slot].append(UnifiedPreset(id=name, name=name, source="standard", **extra))
 
     _bundled_cache = (now, slots)
     return slots
 
 
 async def _resolve_slicer_api_url(db: AsyncSession) -> str | None:
-    """Pick the sidecar URL the bundled-listing fetch should hit.
-
-    Mirrors the slice route's resolution at ``library.py:_run_slicer_with_fallback``:
-    the user's ``preferred_slicer`` setting decides which sidecar Bambuddy
-    talks to, and the per-install URL setting overrides the env default.
-    A user who prefers Bambu Studio gets the *bambu-studio-api* sidecar's
-    bundled list; a user who prefers OrcaSlicer gets the *orca-slicer-api*
-    sidecar's bundled list. Without this branch the listing would always
-    hit OrcaSlicer (port 3003) even for BambuStudio installs (port 3001),
-    leaving the Standard tier permanently empty for them.
-    """
+    """Pick the preferred sidecar URL for slice dispatch and bundled-profile listing."""
     from backend.app.api.routes.settings import get_setting
 
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
+
     if preferred == "orcaslicer":
         configured = await get_setting(db, "orcaslicer_api_url")
-        url = (configured or app_settings.slicer_api_url).strip()
+        url = (configured or app_settings.slicer_api_url or "").strip()
     elif preferred == "bambu_studio":
         configured = await get_setting(db, "bambu_studio_api_url")
-        url = (configured or app_settings.bambu_studio_api_url).strip()
+        url = (configured or app_settings.bambu_studio_api_url or "").strip()
     else:
-        # Unknown preference — return None so the bundled tier is empty
-        # rather than crashing the modal. The slice route raises 400 here;
-        # we degrade silently because the modal's listing is informational.
-        logger.warning("Unknown preferred_slicer setting: %r — bundled tier disabled", preferred)
+        logger.warning("Unknown preferred_slicer setting: %r — sidecar disabled", preferred)
         return None
+
     return url or None
 
 
@@ -427,11 +422,25 @@ async def import_slicer_bundle(
     except SlicerInputError as e:
         # Sidecar's 4xx — most likely a non-.bbscfg upload, a corrupt zip,
         # or a path-traversal entry that the manifest validator caught.
-        # Surface verbatim so the user sees the actual reason in the toast.
+        # Log the detail so it lands in the support bundle: the FE-only
+        # toast was leaving us blind during triage (#1312).
+        logger.warning(
+            "Bundle import rejected by sidecar (%s, %d bytes): %s",
+            filename,
+            len(contents),
+            e,
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except SlicerApiUnavailableError as e:
+        logger.warning("Bundle import: sidecar unreachable (%s): %s", api_url, e)
         raise HTTPException(status_code=503, detail=str(e)) from e
     except SlicerApiError as e:
+        logger.warning(
+            "Bundle import: sidecar server error (%s, %d bytes): %s",
+            filename,
+            len(contents),
+            e,
+        )
         # 5xx from the sidecar's import path is rare — usually a disk
         # write failure inside DATA_PATH/bundles. 502 (bad gateway) is
         # closer to the truth than 500 here, since we're proxying.

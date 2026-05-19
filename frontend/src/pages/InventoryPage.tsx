@@ -44,7 +44,7 @@ function spoolGroupKey(s: InventorySpool): string {
 }
 
 // Column definitions for the inventory table
-const COLUMN_CONFIG_KEY = 'bambuddy-inventory-columns';
+const COLUMN_CONFIG_KEY = 'groundskeeper-inventory-columns';
 
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { id: 'id', label: '#', visible: true },
@@ -421,7 +421,7 @@ const columnSortValues: Record<string, (spool: InventorySpool, assignmentMap: Re
   },
 };
 
-const SORT_STATE_KEY = 'bambuddy-inventory-sort';
+const SORT_STATE_KEY = 'groundskeeper-inventory-sort';
 
 function loadSortState(): SortState {
   try {
@@ -484,7 +484,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   const [showColumnModal, setShowColumnModal] = useState(false);
   const [groupSimilar, setGroupSimilar] = useState(() => {
     try {
-      return localStorage.getItem('bambuddy-inventory-group') === 'true';
+      return localStorage.getItem('groundskeeper-inventory-group') === 'true';
     } catch { return false; }
   });
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -493,7 +493,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(() => {
     try {
-      const stored = localStorage.getItem('bambuddy-inventory-pageSize');
+      const stored = localStorage.getItem('groundskeeper-inventory-pageSize');
       if (stored) {
         const n = Number(stored);
         if ([15, 30, 50, 100, -1].includes(n)) return n;
@@ -987,7 +987,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
     setGroupSimilar(next);
     setExpandedGroups(new Set());
     resetPage();
-    try { localStorage.setItem('bambuddy-inventory-group', String(next)); } catch { /* ignore */ }
+    try { localStorage.setItem('groundskeeper-inventory-group', String(next)); } catch { /* ignore */ }
   };
 
   const toggleGroupExpand = (key: string) => {
@@ -1002,7 +1002,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   const handlePageSizeChange = (size: number) => {
     setPageSize(size);
     setPageIndex(0);
-    try { localStorage.setItem('bambuddy-inventory-pageSize', String(size)); } catch { /* ignore */ }
+    try { localStorage.setItem('groundskeeper-inventory-pageSize', String(size)); } catch { /* ignore */ }
   };
 
   const clearAllFilters = () => {
@@ -1018,15 +1018,15 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="p-4 md:p-8 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <div className="flex items-center gap-3">
-            <Package className="w-6 h-6 text-bambu-green" />
-            <h1 className="text-2xl font-bold text-white">{t('inventory.title')}</h1>
-          </div>
-          <p className="text-sm text-bambu-gray mt-1 ml-9">{t('inventory.noSpools').split('.')[0] ? '' : ''}</p>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Package className="w-7 h-7 text-bambu-green" />
+            {t('inventory.title')}
+          </h1>
+          <p className="text-bambu-gray mt-1">{t('inventory.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button

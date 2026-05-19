@@ -104,11 +104,22 @@ async function request<T>(
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     const detail = error.detail;
-    const message = typeof detail === 'string'
-      ? detail
-      : Array.isArray(detail)
-        ? detail.map((e: { msg?: string }) => (e.msg ?? '').replace(/^Value error,\s*/i, '')).filter(Boolean).join('; ')
-        : `HTTP ${response.status}`;
+    let message: string;
+    if (typeof detail === 'string') {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      // FastAPI 422 shape: each entry has `msg` like "Value error, <real msg>".
+      // Strip the prefix and join. Fall back to raw JSON if every entry has an
+      // empty msg (defensive — shouldn't happen with stock Pydantic, but the
+      // previous fallback masked the real cause as a bare "HTTP 422" toast).
+      const joined = detail
+        .map((e: { msg?: string }) => (e.msg ?? '').replace(/^Value error,\s*/i, ''))
+        .filter(Boolean)
+        .join('; ');
+      message = joined || JSON.stringify(detail) || `HTTP ${response.status}`;
+    } else {
+      message = `HTTP ${response.status}`;
+    }
 
     // Handle 401 Unauthorized - only clear token if it's actually invalid
     // Don't clear on "Authentication required" which might be a timing issue
@@ -155,15 +166,19 @@ export interface LongLivedCameraToken {
 // Printer types
 export interface Printer {
   id: number;
+  printer_type: string;  // "bambu" | "elegoo_centauri" | "snapmaker_u1"
   name: string;
-  serial_number: string;
+  serial_number: string | null;  // Bambu only
   ip_address: string;
-  access_code: string;
+  access_code: string | null;    // Bambu only
   model: string | null;
   location: string | null;  // Group/location name
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   is_active: boolean;
   auto_archive: boolean;
+  // Moonraker-specific config
+  moonraker_port: number | null;
+  moonraker_api_key: string | null;
   external_camera_url: string | null;
   external_camera_type: string | null;  // "mjpeg", "rtsp", "snapshot"
   external_camera_enabled: boolean;
@@ -171,6 +186,7 @@ export interface Printer {
   camera_rotation: number;  // 0, 90, 180, 270 degrees
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
+  out_of_queue: boolean;  // Excluded from automatic queue dispatch; can still receive direct jobs
   created_at: string;
   updated_at: string;
 }
@@ -354,13 +370,44 @@ export interface PrinterStatus {
   awaiting_plate_clear: boolean;
   // AMS drying support
   supports_drying: boolean;
+  // Non-Bambu printer fields (present when printer_type != "bambu")
+  printer_type?: string;        // "bambu" | "elegoo_centauri" | "snapmaker_u1" | "moonraker"
+  klippy_state?: string;        // Moonraker: "ready" | "startup" | "shutdown" | "error"; Elegoo: "ready" | "disconnected"
+  fan_speed?: number | null;    // Generic fan speed (part cooling, 0-100)
+  speed_factor?: number | null; // Print speed factor (1.0 = 100%)
+  machine_name?: string | null; // Vendor-reported model name (Elegoo only)
+  // Feature flags reported by the concrete printer client. Read these instead of
+  // branching on printer_type strings — the backend is the single source of truth.
+  capabilities?: PrinterCapabilities | null;
+}
+
+/** Feature flags for a printer, as reported by the concrete client. */
+export interface PrinterCapabilities {
+  ams: boolean;
+  file_upload: boolean;
+  bed_levelling: boolean;
+  flow_calibration: boolean;
+  vibration_cali: boolean;
+  layer_inspect: boolean;
+  timelapse: boolean;
+  chamber_light: boolean;
+  gcode: boolean;
+  pause_resume: boolean;
+  skip_objects: boolean;
+  multi_nozzle: boolean;
 }
 
 export interface PrinterCreate {
   name: string;
-  serial_number: string;
+  printer_type: string;       // "bambu" | "elegoo_centauri" | "snapmaker_u1"
   ip_address: string;
-  access_code: string;
+  // Bambu-specific
+  serial_number?: string;
+  access_code?: string;
+  // Moonraker-specific
+  port?: number;
+  api_key?: string | null;
+  // Common optional
   model?: string;
   location?: string;
   auto_archive?: boolean;
@@ -371,6 +418,7 @@ export interface PrinterCreate {
   camera_rotation?: number;
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
+  out_of_queue?: boolean;
 }
 
 // Plate Detection
@@ -857,6 +905,7 @@ export interface APIKey {
   can_control_printer: boolean;
   can_read_status: boolean;
   can_access_cloud: boolean;
+  can_update_energy_cost: boolean;
   printer_ids: number[] | null;
   enabled: boolean;
   last_used: string | null;
@@ -870,6 +919,7 @@ export interface APIKeyCreate {
   can_control_printer?: boolean;
   can_read_status?: boolean;
   can_access_cloud?: boolean;
+  can_update_energy_cost?: boolean;
   printer_ids?: number[] | null;
   expires_at?: string | null;
 }
@@ -884,6 +934,7 @@ export interface APIKeyUpdate {
   can_control_printer?: boolean;
   can_read_status?: boolean;
   can_access_cloud?: boolean;
+  can_update_energy_cost?: boolean;
   printer_ids?: number[] | null;
   enabled?: boolean;
   expires_at?: string | null;
@@ -1195,6 +1246,12 @@ export interface SliceRequest {
   bundle?: SliceBundleSpec;
   plate?: number;
   export_3mf?: boolean;
+  // Build-plate override (#1337). When omitted, the slicer uses the process
+  // preset's curr_bed_type as-is. Canonical values match BambuStudio /
+  // OrcaSlicer's enum: "Cool Plate", "Engineering Plate", "High Temp Plate",
+  // "Textured PEI Plate", "Smooth PEI Plate", "Cool Plate (SuperTack)",
+  // "Supertack Plate".
+  bed_type?: string | null;
 }
 
 // GET /api/v1/slicer/bundles — Printer Preset Bundles imported from
@@ -1224,6 +1281,9 @@ export interface UnifiedPreset {
   // responses pre-date these fields entirely.
   filament_type?: string | null;
   filament_colour?: string | null;
+  // Populated for process presets — names of printer presets this process is
+  // compatible with. Null means compatible with any printer.
+  compatible_printers?: string[] | null;
 }
 export interface UnifiedPresetsBySlot {
   printer: UnifiedPreset[];
@@ -1626,6 +1686,50 @@ export interface DiscoveredTasmotaDevice {
   discovered_at: string | null;
 }
 
+// Slicer preset types
+export interface PresetRef {
+  source: 'cloud' | 'local' | 'standard';
+  id: string;
+}
+
+export interface PerPrinterProfileConfig {
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+}
+
+export interface PrintSliceConfigCreate {
+  library_file_id: number;
+  plate_index?: number | null;
+  eligible_printer_ids: number[];
+  per_printer_profiles: Record<string, PerPrinterProfileConfig>;
+}
+
+export interface PrinterProfilePreset {
+  id: number;
+  printer_id: number;
+  name: string;
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrinterProfilePresetCreate {
+  name: string;
+  printer_preset: PresetRef;
+  process_preset: PresetRef;
+  filament_presets: Record<string, PresetRef>;
+}
+
+export interface PrinterProfilePresetUpdate {
+  name?: string;
+  printer_preset?: PresetRef;
+  process_preset?: PresetRef;
+  filament_presets?: Record<string, PresetRef>;
+}
+
 // Print Queue types
 export interface PrintQueueItem {
   id: number;
@@ -1674,6 +1778,9 @@ export interface PrintQueueItem {
   been_jumped?: boolean;
   // Auto-print G-code injection
   gcode_injection?: boolean;
+  // Slice-on-dispatch fields
+  slice_error?: string | null;
+  eligible_printer_ids?: number[] | null;
 }
 
 export interface PrintBatch {
@@ -1717,6 +1824,8 @@ export interface PrintQueueItemCreate {
   gcode_injection?: boolean;
   // Batch: create multiple copies (creates a batch if > 1)
   quantity?: number;
+  // Slice-on-dispatch: mutually exclusive with archive_id/library_file_id
+  slice_config?: PrintSliceConfigCreate | null;
   // Project to associate the resulting archive with
   project_id?: number;
 }
@@ -2334,6 +2443,11 @@ export interface InventorySpool {
   material: string;
   subtype: string | null;
   color_name: string | null;
+  // True when color_name was synthesised from subtype because Spoolman has no
+  // stored value (Spoolman-backed inventory only). The edit form uses this to
+  // leave the input blank, so the user doesn't round-trip the synth value
+  // back to Spoolman as if it were a real user-set color_name (#1319).
+  color_name_is_synthesized?: boolean;
   rgba: string | null;
   // Multi-colour gradient stops (#1154): comma-separated 6/8-char hex.
   extra_colors: string | null;
@@ -2788,6 +2902,20 @@ export interface TwoFAVerifyRequest {
   method: 'totp' | 'email' | 'backup';
 }
 
+/**
+ * A URL that is known to be same-origin (a relative path starting with ``/``).
+ *
+ * Branded so that producers of same-origin URLs (e.g. ``api.oidcProviderIconUrl``)
+ * can be distinguished from arbitrary strings at the type level.  The brand
+ * is compile-time only; at runtime these are plain strings.
+ *
+ * Purpose: CSP-safe image sources for ``<img src=...>``. The strict
+ * ``img-src 'self' data: blob:`` CSP rejects anything that isn't same-origin,
+ * so callers that demand a ``SameOriginUrl`` get a compile-time guarantee
+ * that no external URL slips through.
+ */
+export type SameOriginUrl = string & { readonly __brand: 'SameOriginUrl' };
+
 // OIDC interfaces
 export interface OIDCProvider {
   id: number;
@@ -2802,6 +2930,14 @@ export interface OIDCProvider {
   require_email_verified: boolean;
   icon_url?: string | null;
   default_group_id?: number | null;
+  // True when the backend has cached icon bytes for this provider.
+  // Login page / admin preview consume this via the proxy URL
+  // /api/v1/auth/oidc/providers/{id}/icon (#1333) so the SPA never
+  // hotlinks the external icon URL — that would require loosening
+  // the strict img-src CSP.  Required, not optional: the backend always
+  // includes this field in the response (Pydantic default-False is
+  // populated unconditionally in the route handler).
+  has_icon: boolean;
 }
 
 export interface OIDCProviderCreate {
@@ -2867,6 +3003,14 @@ export interface LDAPTestResponse {
   message: string;
 }
 
+export interface LDAPSearchResult {
+  username: string;
+  email: string | null;
+  display_name: string | null;
+  dn: string;
+  already_provisioned: boolean;
+}
+
 export interface SetupResponse {
   auth_enabled: boolean;
   admin_created?: boolean;
@@ -2928,6 +3072,13 @@ export const api = {
   testLDAP: () =>
     request<LDAPTestResponse>('/auth/ldap/test', {
       method: 'POST',
+    }),
+  searchLDAPDirectory: (q: string) =>
+    request<LDAPSearchResult[]>(`/auth/ldap/search?q=${encodeURIComponent(q)}`),
+  provisionLDAPUser: (username: string) =>
+    request<UserResponse>('/auth/ldap/provision', {
+      method: 'POST',
+      body: JSON.stringify({ username }),
     }),
   forgotPassword: (data: ForgotPasswordRequest) =>
     request<ForgotPasswordResponse>('/auth/forgot-password', {
@@ -3017,6 +3168,17 @@ export const api = {
     }),
   deleteOIDCProvider: (id: number) =>
     request<{ message: string }>(`/auth/oidc/providers/${id}`, { method: 'DELETE' }),
+
+  // OIDC provider icon proxy (#1333) — same-origin path so the strict
+  // img-src CSP stays in force. Returns a SameOriginUrl-branded string
+  // so a future caller can't accidentally substitute an attacker-
+  // controlled URL where this is consumed.
+  oidcProviderIconUrl: (id: number): SameOriginUrl =>
+    `/api/v1/auth/oidc/providers/${id}/icon` as SameOriginUrl,
+  deleteOIDCProviderIcon: (id: number) =>
+    request<void>(`/auth/oidc/providers/${id}/icon`, { method: 'DELETE' }),
+  refreshOIDCProviderIcon: (id: number) =>
+    request<OIDCProvider>(`/auth/oidc/providers/${id}/icon/refresh`, { method: 'POST' }),
 
   // OIDC authorize URL
   getOIDCAuthorizeUrl: (providerId: number) =>
@@ -3408,8 +3570,12 @@ export const api = {
     }),
   toggleFavorite: (id: number) =>
     request<Archive>(`/archives/${id}/favorite`, { method: 'POST' }),
-  deleteArchive: (id: number) =>
-    request<void>(`/archives/${id}`, { method: 'DELETE' }),
+  // Soft-deletes by default (#1343): files removed from disk, row hidden
+  // from listings, but its filament / time / cost / energy contribution
+  // stays in Quick Stats. Pass purgeStats=true to hard-delete and drop the
+  // row from statistics too.
+  deleteArchive: (id: number, purgeStats: boolean = false) =>
+    request<void>(`/archives/${id}${purgeStats ? '?purge_stats=true' : ''}`, { method: 'DELETE' }),
 
   // ========== Archive auto-purge (#1008 follow-up) ==========
   previewArchivePurge: (olderThanDays: number) =>
@@ -3990,6 +4156,24 @@ export const api = {
   // Settings
   getSettings: () => request<AppSettings>('/settings/'),
   getDefaultSidebarOrder: () => request<{ default_sidebar_order: string }>('/settings/default-sidebar-order'),
+  // Public subset of settings for UI rendering — no settings:read required.
+  // Used by pages whose users may not have SETTINGS_READ (e.g. operators with
+  // only printers:clear_plate). Keep in sync with _UI_PREFERENCE_FIELDS in
+  // backend/app/api/routes/settings.py.
+  getUiPreferences: () =>
+    request<{
+      require_plate_clear?: boolean;
+      check_printer_firmware?: boolean;
+      camera_view_mode?: 'window' | 'embedded';
+      time_format?: 'system' | '12h' | '24h';
+      date_format?: string;
+      drying_presets?: string;
+      ams_humidity_good?: number;
+      ams_humidity_fair?: number;
+      ams_temp_good?: number;
+      ams_temp_fair?: number;
+      bed_cooled_threshold?: number;
+    }>('/settings/ui-preferences'),
   updateSettings: (data: AppSettingsUpdate) =>
     request<AppSettings>('/settings/', {
       method: 'PUT',
@@ -4015,7 +4199,7 @@ export const api = {
 
     // Get filename from Content-Disposition header
     const contentDisposition = response.headers.get('Content-Disposition');
-    let filename = 'bambuddy-backup.zip';
+    let filename = 'groundskeeper-backup.zip';
     if (contentDisposition) {
       const match = contentDisposition.match(/filename=([^;]+)/);
       if (match) filename = match[1].trim().replace(/^"(.*)"$/, '$1');
@@ -4263,6 +4447,22 @@ export const api = {
     request<{ success: boolean; message: string }>(`/printers/${printerId}/kprofiles/notes/${encodeURIComponent(settingId)}`, {
       method: 'DELETE',
     }),
+
+  // Printer Profile Presets (slicer profiles saved per printer)
+  getProfilePresets: (printerId: number) =>
+    request<PrinterProfilePreset[]>(`/printers/${printerId}/profile-presets`),
+  createProfilePreset: (printerId: number, data: PrinterProfilePresetCreate) =>
+    request<PrinterProfilePreset>(`/printers/${printerId}/profile-presets`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateProfilePreset: (printerId: number, presetId: number, data: PrinterProfilePresetUpdate) =>
+    request<PrinterProfilePreset>(`/printers/${printerId}/profile-presets/${presetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteProfilePreset: (printerId: number, presetId: number) =>
+    request<void>(`/printers/${printerId}/profile-presets/${presetId}`, { method: 'DELETE' }),
 
   // Slot Preset Mappings
   getSlotPresets: (printerId: number) =>
@@ -4819,7 +5019,12 @@ export const api = {
   // Plate Detection - Multi-reference calibration (stores up to 5 references per printer)
   checkPlateEmpty: (printerId: number, options?: { useExternal?: boolean; includeDebugImage?: boolean }) => {
     const params = new URLSearchParams();
-    params.set('use_external', String(options?.useExternal ?? false));
+    // Only forward use_external when the caller explicitly sets it. Omitted →
+    // backend derives the default from the printer's external_camera_enabled
+    // setting so calibration and runtime checks use the same camera (#1359).
+    if (options?.useExternal !== undefined) {
+      params.set('use_external', String(options.useExternal));
+    }
     params.set('include_debug_image', String(options?.includeDebugImage ?? false));
     return request<PlateDetectionResult>(
       `/printers/${printerId}/camera/check-plate?${params.toString()}`
@@ -4833,7 +5038,9 @@ export const api = {
   calibratePlateDetection: (printerId: number, options?: { label?: string; useExternal?: boolean }) => {
     const params = new URLSearchParams();
     if (options?.label) params.set('label', options.label);
-    params.set('use_external', String(options?.useExternal ?? false));
+    if (options?.useExternal !== undefined) {
+      params.set('use_external', String(options.useExternal));
+    }
     return request<CalibrationResult & { index: number }>(
       `/printers/${printerId}/camera/plate-detection/calibrate?${params.toString()}`,
       { method: 'POST' }
@@ -5367,7 +5574,7 @@ export const api = {
     }>(`/library/files/${fileId}/filament-requirements${qs.toString() ? `?${qs}` : ''}`);
   },
 
-  /** Poll the sidecar's per-request progress snapshot via the Bambuddy
+  /** Poll the sidecar's per-request progress snapshot via the GroundsKeeper
    * proxy. Used by the SliceModal's filament-discovery path so the inline
    * spinner + persistent toast can show "Generating G-code (45%)" while
    * the preview slice runs. Returns null on 404 (sidecar doesn't yet
@@ -6277,7 +6484,7 @@ export const supportApi = {
     }
     // Get filename from Content-Disposition header or use default
     const disposition = response.headers.get('Content-Disposition');
-    const filename = parseContentDispositionFilename(disposition) || 'bambuddy-support.zip';
+    const filename = parseContentDispositionFilename(disposition) || 'groundskeeper-support.zip';
 
     // Download the blob
     const blob = await response.blob();

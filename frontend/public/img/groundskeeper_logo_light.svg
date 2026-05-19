@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 96" role="img" aria-label="GroundsKeeper">
+  <!-- White background for light mode -->
+  <rect x="0" y="0" width="540" height="96" fill="white"/>
+
+  <!-- Icon: dark rounded square badge -->
+  <rect x="0" y="0" width="96" height="96" rx="18" ry="18" fill="#0d1c0d"/>
+
+  <!-- 3-D printer extruder body (trapezoid) -->
+  <polygon points="18,10 78,10 70,34 26,34" fill="#00ae42"/>
+  <!-- Extruder barrel -->
+  <rect x="38" y="34" width="20" height="14" rx="3" ry="3" fill="#00ae42"/>
+  <!-- Nozzle tip -->
+  <polygon points="40,48 56,48 48,60" fill="#00ae42"/>
+  <!-- Filament output dot -->
+  <circle cx="48" cy="63" r="4" fill="white"/>
+
+  <!-- Ground / lawn line -->
+  <rect x="10" y="72" width="76" height="2" rx="1" fill="#2d6a2d"/>
+
+  <!-- Grass blades -->
+  <path d="M16 72 Q14 60 18 53 Q23 60 20 72 Z" fill="#4da64d"/>
+  <path d="M30 72 Q27 57 32 49 Q37 57 34 72 Z" fill="#00ae42"/>
+  <path d="M50 72 Q47 57 52 49 Q57 57 54 72 Z" fill="#4da64d"/>
+  <path d="M64 72 Q62 60 66 53 Q70 60 68 72 Z" fill="#00ae42"/>
+
+  <!-- Print-bed reference dots -->
+  <circle cx="29" cy="85" r="2.5" fill="white" opacity="0.28"/>
+  <circle cx="48" cy="85" r="2.5" fill="white" opacity="0.28"/>
+  <circle cx="67" cy="85" r="2.5" fill="white" opacity="0.28"/>
+
+  <!-- Logotype -->
+  <text
+    x="112" y="65"
+    font-family="'Arial Black','Helvetica Neue',Arial,sans-serif"
+    font-size="46"
+    font-weight="900"
+    letter-spacing="0.5"
+    fill="#1a1a1a">GROUNDS<tspan fill="#00ae42">KEEPER</tspan></text>
+</svg>

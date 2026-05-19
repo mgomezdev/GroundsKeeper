@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, PlainSerializer
 
+from backend.app.schemas.print_slice_config import PrintSliceConfigCreate
+
 
 # Custom serializer to ensure UTC datetimes have Z suffix
 def serialize_utc_datetime(dt: datetime | None) -> str | None:
@@ -46,6 +48,9 @@ class PrintQueueItemCreate(BaseModel):
     quantity: int = 1
     # Project to associate the resulting archive with
     project_id: int | None = None
+    # Slice-on-dispatch: provide instead of archive_id / library_file_id.
+    # The system slices the raw library file at dispatch time.
+    slice_config: PrintSliceConfigCreate | None = None
 
 
 class PrintQueueItemUpdate(BaseModel):
@@ -100,6 +105,10 @@ class PrintQueueItemResponse(BaseModel):
     completed_at: UTCDatetime
     error_message: str | None
     created_at: UTCDatetime
+    # Populated when slicing failed at dispatch time
+    slice_error: str | None = None
+    # IDs of eligible printers (set when slice_config_id is present)
+    eligible_printer_ids: list[int] | None = None
 
     # Nested info for UI (populated in route)
     archive_name: str | None = None

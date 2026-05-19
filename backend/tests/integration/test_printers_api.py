@@ -1522,6 +1522,193 @@ class TestChamberLightAPI:
             assert response.status_code == 500
             assert "failed" in response.json()["detail"].lower()
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_chamber_light_unsupported_returns_422(self, async_client: AsyncClient, printer_factory):
+        """Capability gate: 422 when printer reports chamber_light=False."""
+        printer = await printer_factory(name="No Light Printer")
+
+        mock_client = MagicMock()
+        mock_caps = MagicMock()
+        mock_caps.chamber_light = False
+        mock_client.get_capabilities.return_value = mock_caps
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/chamber-light?on=true")
+
+            assert response.status_code == 422
+            assert "not support" in response.json()["detail"].lower()
+            mock_client.set_chamber_light.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_chamber_light_supported_calls_through(self, async_client: AsyncClient, printer_factory):
+        """Capability gate passes when chamber_light=True."""
+        printer = await printer_factory(name="Light Printer")
+
+        mock_client = MagicMock()
+        mock_caps = MagicMock()
+        mock_caps.chamber_light = True
+        mock_client.get_capabilities.return_value = mock_caps
+        mock_client.set_chamber_light.return_value = True
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/chamber-light?on=true")
+
+            assert response.status_code == 200
+            mock_client.set_chamber_light.assert_called_once_with(True)
+
+
+class TestBedJogAPI:
+    """Integration tests for the bed-jog endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_not_found(self, async_client: AsyncClient):
+        response = await async_client.post("/api/v1/printers/99999/bed-jog?distance=1.0")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_zero_distance_rejected(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+        response = await async_client.post(f"/api/v1/printers/{printer.id}/bed-jog?distance=0")
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_excessive_distance_rejected(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+        response = await async_client.post(f"/api/v1/printers/{printer.id}/bed-jog?distance=201")
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_not_connected(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = None
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/bed-jog?distance=1.0")
+
+            assert response.status_code == 400
+            assert "not connected" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_success(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P", model="X1C")
+
+        mock_client = MagicMock()
+        mock_client.jog_z.return_value = True
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/bed-jog?distance=1.0")
+
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+            mock_client.jog_z.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bed_jog_failure_returns_500(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P", model="X1C")
+
+        mock_client = MagicMock()
+        mock_client.jog_z.return_value = False
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/bed-jog?distance=1.0")
+
+            assert response.status_code == 500
+
+
+class TestHomeAxesAPI:
+    """Integration tests for the home-axes endpoint."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_not_found(self, async_client: AsyncClient):
+        response = await async_client.post("/api/v1/printers/99999/home-axes")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_invalid_axes_rejected(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+        response = await async_client.post(f"/api/v1/printers/{printer.id}/home-axes?axes=foo")
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_not_connected(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = None
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/home-axes")
+
+            assert response.status_code == 400
+            assert "not connected" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_success(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+
+        mock_client = MagicMock()
+        mock_client.home.return_value = True
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/home-axes")
+
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+            mock_client.home.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_all_valid_values(self, async_client: AsyncClient, printer_factory):
+        """'z', 'xy', 'all' are all accepted."""
+        printer = await printer_factory(name="P")
+
+        mock_client = MagicMock()
+        mock_client.home.return_value = True
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            for axes in ("z", "xy", "all"):
+                response = await async_client.post(f"/api/v1/printers/{printer.id}/home-axes?axes={axes}")
+                assert response.status_code == 200, f"axes={axes} should be accepted"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_home_axes_failure_returns_500(self, async_client: AsyncClient, printer_factory):
+        printer = await printer_factory(name="P")
+
+        mock_client = MagicMock()
+        mock_client.home.return_value = False
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/home-axes")
+
+            assert response.status_code == 500
+
 
 class TestAirductModeAPI:
     """Integration tests for the airduct mode endpoint (P2S/H2*)."""

@@ -3,7 +3,7 @@ import logging
 import re
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,12 +15,19 @@ from backend.app.core.permissions import Permission
 from backend.app.models.ams_label import AmsLabel
 from backend.app.models.printer import Printer
 from backend.app.models.slot_preset import SlotPresetMapping
+from backend.app.models.bambu_printer_config import BambuPrinterConfig
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.schemas.printer import (
     AmsLabelBody,
     AMSTray,
     AMSUnit,
+    BambuPrinterCreate,
+    BambuPrinterUpdate,
     FilaSwitchResponse,
     HMSErrorResponse,
+    MoonrakerPrinterCreate,
+    MoonrakerPrinterStatus,
+    MoonrakerPrinterUpdate,
     NozzleInfoResponse,
     NozzleRackSlot,
     PrinterCreate,
@@ -31,12 +38,9 @@ from backend.app.schemas.printer import (
 )
 from backend.app.services.bambu_ftp import (
     cache_3mf_download,
-    delete_file_async,
     download_file_bytes_async,
     download_file_try_paths_async,
     get_cached_3mf,
-    get_storage_info_async,
-    list_files_async,
 )
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -57,32 +61,77 @@ async def list_printers(
     db: AsyncSession = Depends(get_db),
 ):
     """List all configured printers."""
-    result = await db.execute(select(Printer).order_by(Printer.name))
-    return list(result.scalars().all())
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+        .order_by(Printer.name)
+    )
+    printers = result.scalars().all()
+    return [PrinterResponse.from_orm_with_roi(p) for p in printers]
 
 
 @router.post("/", response_model=PrinterResponse)
 async def create_printer(
-    printer_data: PrinterCreate,
+    printer_data: BambuPrinterCreate | MoonrakerPrinterCreate,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a new printer."""
-    # Check if serial number already exists
-    result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Printer with this serial number already exists")
+    from sqlalchemy.orm import selectinload
 
-    printer = Printer(**printer_data.model_dump())
+    # Build Printer row from common fields only
+    common_fields = {
+        "name": printer_data.name,
+        "printer_type": printer_data.printer_type,
+        "ip_address": printer_data.ip_address,
+        "model": printer_data.model,
+        "location": printer_data.location,
+        "auto_archive": printer_data.auto_archive,
+        "external_camera_url": printer_data.external_camera_url,
+        "external_camera_type": printer_data.external_camera_type,
+        "external_camera_enabled": printer_data.external_camera_enabled,
+        "external_camera_snapshot_url": printer_data.external_camera_snapshot_url,
+        "camera_rotation": printer_data.camera_rotation,
+    }
+    printer = Printer(**common_fields)
     db.add(printer)
-    await db.commit()
-    await db.refresh(printer)
+    await db.flush()  # populate printer.id before creating config row
 
-    # Connect to the printer
+    if isinstance(printer_data, BambuPrinterCreate):
+        # Unique serial number check
+        existing = await db.execute(
+            select(BambuPrinterConfig).where(BambuPrinterConfig.serial_number == printer_data.serial_number)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(400, "Printer with this serial number already exists")
+        db.add(BambuPrinterConfig(
+            printer_id=printer.id,
+            serial_number=printer_data.serial_number,
+            access_code=printer_data.access_code,
+        ))
+    else:
+        db.add(MoonrakerPrinterConfig(
+            printer_id=printer.id,
+            port=printer_data.port,
+            api_key=printer_data.api_key,
+        ))
+
+    await db.commit()
+
+    # Re-fetch with config relationship loaded
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer.id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
+    printer = result.scalar_one()
+
     if printer.is_active:
         await printer_manager.connect_printer(printer)
 
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.get("/usb-cameras")
@@ -137,66 +186,18 @@ async def get_available_filaments(
     filaments = []
 
     for printer in printers_list:
-        status = printer_manager.get_status(printer.id)
-        if not status:
+        client = printer_manager.get_client(printer.id)
+        if not client:
             continue
-
-        # Get ams_extruder_map for dual-nozzle printers
-        ams_extruder_map = status.raw_data.get("ams_extruder_map", {})
-
-        # AMS trays
-        for ams_unit in status.raw_data.get("ams", []):
-            ams_id = str(ams_unit.get("id", 0))
-            extruder_id = ams_extruder_map.get(ams_id)
-            for tray in ams_unit.get("tray", []):
-                tray_type = tray.get("tray_type")
-                if not tray_type:
-                    continue
-                tray_color = tray.get("tray_color", "")
-                # Normalize color: remove alpha, add hash
-                hex_color = tray_color.replace("#", "")[:6] if tray_color else "808080"
-                color = f"#{hex_color}"
-                tray_info_idx = tray.get("tray_info_idx", "")
-                tray_sub_brands = tray.get("tray_sub_brands", "") or ""
-
-                key = (tray_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
-                if key not in seen:
-                    seen.add(key)
-                    filaments.append(
-                        {
-                            "type": tray_type,
-                            "color": color,
-                            "tray_info_idx": tray_info_idx,
-                            "tray_sub_brands": tray_sub_brands,
-                            "extruder_id": extruder_id,
-                        }
-                    )
-
-        # External spools (vt_tray)
-        for vt in status.raw_data.get("vt_tray") or []:
-            vt_type = vt.get("tray_type")
-            if not vt_type:
-                continue
-            vt_color = vt.get("tray_color", "")
-            hex_color = vt_color.replace("#", "")[:6] if vt_color else "808080"
-            color = f"#{hex_color}"
-            tray_info_idx = vt.get("tray_info_idx", "")
-            tray_sub_brands = vt.get("tray_sub_brands", "") or ""
-            vt_id = int(vt.get("id", 254))
-            extruder_id = (255 - vt_id) if ams_extruder_map else None
-
-            key = (vt_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
+        for f in client.get_loaded_filaments():
+            tray_type = f.get("type", "")
+            hex_color = f.get("color", "#808080").lstrip("#")
+            tray_sub_brands = f.get("tray_sub_brands", "") or ""
+            extruder_id = f.get("extruder_id")
+            key = (tray_type.upper(), hex_color.lower(), tray_sub_brands.upper(), extruder_id)
             if key not in seen:
                 seen.add(key)
-                filaments.append(
-                    {
-                        "type": vt_type,
-                        "color": color,
-                        "tray_info_idx": tray_info_idx,
-                        "tray_sub_brands": tray_sub_brands,
-                        "extruder_id": extruder_id,
-                    }
-                )
+                filaments.append(f)
 
     return filaments
 
@@ -213,6 +214,8 @@ async def get_developer_mode_warnings(
 
     warnings = []
     for printer in printers:
+        if printer.printer_type != "bambu":
+            continue
         state = statuses.get(printer.id)
         if state and state.connected and state.developer_mode is False:
             warnings.append(
@@ -231,27 +234,44 @@ async def get_printer(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer_id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.patch("/{printer_id}", response_model=PrinterResponse)
 async def update_printer(
     printer_id: int,
-    printer_data: PrinterUpdate,
+    printer_data: BambuPrinterUpdate | MoonrakerPrinterUpdate,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Printer)
+        .where(Printer.id == printer_id)
+        .options(selectinload(Printer.bambu_config), selectinload(Printer.moonraker_config))
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+
+    # Vendor-specific fields go to config tables, not the base Printer row
+    bambu_fields = {"access_code"}
+    moonraker_fields = {"port", "api_key"}
+    config_updates = {k: update_data.pop(k) for k in list(update_data) if k in bambu_fields | moonraker_fields}
 
     # Handle nested ROI object - flatten to individual columns
     if "plate_detection_roi" in update_data:
@@ -262,25 +282,33 @@ async def update_printer(
             update_data["plate_detection_roi_w"] = roi.get("w")
             update_data["plate_detection_roi_h"] = roi.get("h")
         else:
-            # Clear ROI if set to null
             update_data["plate_detection_roi_x"] = None
             update_data["plate_detection_roi_y"] = None
             update_data["plate_detection_roi_w"] = None
             update_data["plate_detection_roi_h"] = None
 
-    for field, value in update_data.items():
-        setattr(printer, field, value)
+    for field_name, value in update_data.items():
+        setattr(printer, field_name, value)
+
+    # Apply config-table updates
+    if config_updates:
+        if printer.bambu_config:
+            for k, v in {k: v for k, v in config_updates.items() if k in bambu_fields}.items():
+                setattr(printer.bambu_config, k, v)
+        if printer.moonraker_config:
+            for k, v in {k: v for k, v in config_updates.items() if k in moonraker_fields}.items():
+                setattr(printer.moonraker_config, k, v)
 
     await db.commit()
     await db.refresh(printer)
 
-    # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    needs_reconnect = any(k in update_data for k in ["ip_address", "is_active"]) or bool(config_updates)
+    if needs_reconnect:
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
 
-    return printer
+    return PrinterResponse.from_orm_with_roi(printer)
 
 
 @router.delete("/{printer_id}")
@@ -341,19 +369,43 @@ async def delete_printer(
     return {"status": "deleted", "archives_deleted": delete_archives}
 
 
-@router.get("/{printer_id}/status", response_model=PrinterStatus)
+@router.get("/{printer_id}/status")
 async def get_printer_status(
     printer_id: int,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get real-time status of a printer."""
+    """Get real-time status of a printer. Response shape is discriminated by printer_type."""
+    from backend.app.services.elegoo_centauri_client import ElegooState
+    from backend.app.services.moonraker_client import MoonrakerState
+    from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
+
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     state = printer_manager.get_status(printer_id)
+
+    # Elegoo Centauri (SDCP) printers
+    if isinstance(state, ElegooState):
+        status_dict = _elegoo_state_to_dict(state, printer_id)
+        status_dict["name"] = printer.name
+        status_dict["awaiting_plate_clear"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        status_dict["capabilities"] = printer_manager.get_capabilities_dict(printer_id)
+        return MoonrakerPrinterStatus(**status_dict)
+
+    # Moonraker-based printers get their own slimmer response
+    if isinstance(state, MoonrakerState):
+        status_dict = _moonraker_state_to_dict(state, printer_id)
+        status_dict["name"] = printer.name
+        status_dict["awaiting_plate_clear"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        status_dict["cover_url"] = (
+            printer.external_camera_url if printer.external_camera_enabled else None
+        )
+        status_dict["capabilities"] = printer_manager.get_capabilities_dict(printer_id)
+        return MoonrakerPrinterStatus(**status_dict)
+
     if not state:
         return PrinterStatus(
             id=printer_id,
@@ -652,6 +704,7 @@ async def get_printer_status(
             if state.fila_switch and state.fila_switch.installed
             else None
         ),
+        capabilities=printer_manager.get_capabilities_dict(printer_id),
     )
 
 
@@ -730,15 +783,21 @@ async def disconnect_printer(
 @router.post("/test")
 async def test_printer_connection(
     ip_address: str,
-    serial_number: str,
-    access_code: str,
+    printer_type: str = "bambu",
+    serial_number: str = "",
+    access_code: str = "",
+    port: int = 7125,
+    api_key: str | None = None,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
 ):
     """Test connection to a printer without saving."""
     result = await printer_manager.test_connection(
         ip_address=ip_address,
+        printer_type=printer_type,
         serial_number=serial_number,
         access_code=access_code,
+        port=port,
+        api_key=api_key,
     )
     return result
 
@@ -1009,16 +1068,15 @@ async def list_printer_files(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
+        raise HTTPException(405, "File management not supported for this printer type")
 
-    # Add full path to each file
-    for f in files:
-        f["path"] = f"{path.rstrip('/')}/{f['name']}" if path != "/" else f"/{f['name']}"
-
-    return {
-        "path": path,
-        "files": files,
-    }
+    directory = path if path.endswith("/") else path + "/"
+    files = await asyncio.get_event_loop().run_in_executor(None, client.list_files, directory)
+    return {"path": path, "files": files}
 
 
 @router.get("/{printer_id}/files/download")
@@ -1033,6 +1091,8 @@ async def download_printer_file(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File download not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1077,6 +1137,8 @@ async def get_printer_file_gcode(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1119,6 +1181,8 @@ async def get_printer_file_plates(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     filename = path.split("/")[-1]
     if not filename.lower().endswith(".3mf"):
@@ -1360,6 +1424,8 @@ async def get_printer_file_plate_thumbnail(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1395,6 +1461,8 @@ async def download_printer_files_as_zip(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "File management not supported for this printer type")
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -1437,11 +1505,46 @@ async def delete_printer_file(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    success = await delete_file_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
+        raise HTTPException(405, "File management not supported for this printer type")
+
+    success = await asyncio.get_event_loop().run_in_executor(None, client.delete_file, path)
     if not success:
         raise HTTPException(500, f"Failed to delete file: {path}")
-
     return {"status": "deleted", "path": path}
+
+
+@router.post("/{printer_id}/files/upload")
+async def upload_printer_file(
+    printer_id: int,
+    file: UploadFile = File(...),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a file to the printer (Elegoo Centauri only)."""
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_upload_supported:
+        raise HTTPException(400, "This printer does not support direct file upload")
+
+    file_data = await file.read()
+    filename = file.filename or "upload.gcode"
+    success = await asyncio.get_event_loop().run_in_executor(
+        None, client.upload_file, file_data, filename
+    )
+    if not success:
+        raise HTTPException(500, "File upload failed")
+
+    return {"status": "uploaded", "filename": filename, "path": f"/local/{filename}"}
 
 
 @router.get("/{printer_id}/storage")
@@ -1456,9 +1559,14 @@ async def get_printer_storage(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
+    client = printer_manager.get_client(printer_id)
+    if not client:
+        raise HTTPException(400, "Printer not connected")
+    if not client.file_listing_supported:
+        raise HTTPException(405, "File management not supported for this printer type")
 
-    return storage_info or {"used_bytes": None, "free_bytes": None}
+    info = await asyncio.get_event_loop().run_in_executor(None, client.storage_info)
+    return info or {"used_bytes": None, "free_bytes": None}
 
 
 # ============================================
@@ -1477,6 +1585,8 @@ async def enable_mqtt_logging(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     success = printer_manager.enable_logging(printer_id, True)
     if not success:
@@ -1496,6 +1606,8 @@ async def disable_mqtt_logging(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     success = printer_manager.enable_logging(printer_id, False)
     if not success:
@@ -1515,6 +1627,8 @@ async def get_mqtt_logs(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     logs = printer_manager.get_logs(printer_id)
     return {
@@ -1542,6 +1656,8 @@ async def clear_mqtt_logs(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "MQTT logging is only available for Bambu printers")
 
     printer_manager.clear_logs(printer_id)
     return {"status": "cleared"}
@@ -2418,10 +2534,13 @@ async def save_ams_label(
     older firmware that does not report a serial) a synthetic key based on the
     printer_id and ams_id is used as a fallback.
     """
-    # Verify printer exists
+    # Verify printer exists and is Bambu (AMS is Bambu-specific)
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    if not result.scalar_one_or_none():
+    printer = result.scalar_one_or_none()
+    if not printer:
         raise HTTPException(404, "Printer not found")
+    if printer.printer_type != "bambu":
+        raise HTTPException(405, "AMS labels are only applicable to Bambu printers")
 
     # Determine the serial key to store under
     stripped = body.ams_serial.strip() if body.ams_serial else ""
@@ -2700,6 +2819,9 @@ async def set_chamber_light(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
+    if not client.get_capabilities().chamber_light:
+        raise HTTPException(422, "This printer does not support chamber light control")
+
     success = client.set_chamber_light(on)
     if not success:
         raise HTTPException(500, "Failed to control chamber light")
@@ -2711,18 +2833,33 @@ async def set_chamber_light(
 async def bed_jog(
     printer_id: int,
     distance: float = Query(
-        ..., description="Relative Z distance in mm (positive = bed down / nozzle further away, negative = bed up)"
+        ...,
+        description=(
+            "Signed nozzle-bed gap adjustment in mm. Negative = decrease gap "
+            '("up" arrow in the UI: bed up on bed-on-Z models, toolhead down '
+            "on A1 bed-slingers). Positive = increase gap. The backend "
+            "translates this into the right G-code Z sign per printer model."
+        ),
     ),
     force: bool = Query(False, description="If true, bypass soft endstops via M211 (for use when Z is not homed)"),
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
     db: AsyncSession = Depends(get_db),
 ):
-    """Move the build plate along the Z axis by a relative distance.
+    """Adjust the nozzle-bed gap by a relative distance.
 
     Emits a short G-code sequence via MQTT. When ``force`` is true the soft
     endstops are disabled for the duration of the move, matching the
     "ignore and move anyway" option Bambu Studio offers when the printer
     is not homed.
+
+    Direction handling: on bed-on-Z printers (X1 / P1 / H2 family) the bed
+    is the Z-axis, and Bambu's home convention puts Z=0 at the top with
+    Z+ moving the bed down — so a frontend "Up" (decrease gap) maps
+    naturally to ``G1 Z-``. On bed-slingers (A1 / A1 Mini) the Z-axis is
+    the *toolhead*, and ``G1 Z-`` instead drives the nozzle DOWN into the
+    bed (#1334 reported exactly that crash). For those models we invert
+    the sign before emitting the G-code, so the UI semantics stay the
+    same regardless of which part physically moves.
     """
     if distance == 0 or abs(distance) > 200:
         raise HTTPException(400, "Distance must be non-zero and ≤ 200 mm")
@@ -2736,14 +2873,13 @@ async def bed_jog(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    lines = []
-    if force:
-        lines.append("M211 S0")
-    lines += ["G91", f"G1 Z{distance:.2f} F600", "G90"]
-    if force:
-        lines.append("M211 S1")
+    from backend.app.services.printer_manager import is_bed_slinger
 
-    if not client.send_gcode("\n".join(lines)):
+    # Bed-slingers (A1/A1 Mini) move the toolhead on Z, so invert the sign
+    # to keep UI semantics consistent ("up" always means decrease nozzle-bed gap).
+    adjusted = -distance if is_bed_slinger(printer.model) else distance
+
+    if not client.jog_z(adjusted, force):
         raise HTTPException(500, "Failed to send bed-jog command")
 
     return {"success": True, "message": f"Bed jog {distance:+.1f} mm sent"}
@@ -2787,7 +2923,7 @@ async def home_axes(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
-    if not client.send_gcode("G28"):
+    if not client.home():
         raise HTTPException(500, "Failed to send home command")
 
     return {"success": True, "message": "Full auto-home sequence sent"}

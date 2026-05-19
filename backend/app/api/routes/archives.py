@@ -1,9 +1,10 @@
 import io
 import json
 import logging
+import re as _re
 import zipfile
 from collections import defaultdict
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -46,6 +47,74 @@ def _safe_filename(filename: str) -> str:
     '..\\\\..\\\\evil.3mf' is correctly stripped to 'evil.3mf' on Linux.
     """
     return Path(filename.replace("\\", "/")).name
+
+
+_TIMELAPSE_FILENAME_TS_RE = _re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})")
+_DEFAULT_TIMELAPSE_OFFSETS_HOURS: tuple[int, ...] = (0, 8, -8, 7, -7, 1, -1)
+_DEFAULT_TIMELAPSE_TOLERANCE = timedelta(hours=4)
+_DEFAULT_TIMELAPSE_AMBIGUITY_MARGIN = timedelta(minutes=15)
+
+
+def _match_timelapse_by_timestamp(
+    video_files: list[dict],
+    archive_start: datetime | None,
+    *,
+    tolerance: timedelta = _DEFAULT_TIMELAPSE_TOLERANCE,
+    ambiguity_margin: timedelta = _DEFAULT_TIMELAPSE_AMBIGUITY_MARGIN,
+    offsets_hours: tuple[int, ...] = _DEFAULT_TIMELAPSE_OFFSETS_HOURS,
+) -> tuple[dict | None, timedelta | None]:
+    """Pick the timelapse whose filename timestamp best matches the print start time.
+
+    Bambu timelapse filenames embed the printer-local START time (e.g.
+    "video_2026-05-08_09-41-29.mp4"). The printer's clock may be offset from the
+    server's — especially in LAN-Only mode where NTP is unreachable — so we try a
+    small set of common UTC offsets and keep the (video, offset) pair with the
+    smallest absolute distance from archive_start. We deliberately do NOT consider
+    archive_end here: the filename is start time, not end time, so comparing it to
+    completion is not a real signal (Strategy 3 handles end via file mtime).
+
+    Because the offset list densely covers a wide span, an unrelated video's
+    filename can coincidentally land near a later print's start at some offset.
+    To avoid that false positive, we require the best (video, offset) pair to
+    beat the next-best pair *from a different video* by at least `ambiguity_margin`.
+    When the top two candidates from different videos are too close to call,
+    we return None and let the caller fall back to manual selection.
+    """
+    if archive_start is None:
+        return None, None
+
+    # (diff, video) for every (video, offset) pair within tolerance.
+    candidates: list[tuple[timedelta, dict]] = []
+
+    for f in video_files:
+        fname = f.get("name", "")
+        m = _TIMELAPSE_FILENAME_TS_RE.search(fname)
+        if not m:
+            continue
+        try:
+            file_time = datetime.strptime(m.group(1), "%Y-%m-%d_%H-%M-%S")
+        except ValueError:
+            continue
+
+        for hour_offset in offsets_hours:
+            adjusted = file_time - timedelta(hours=hour_offset)
+            diff = abs(adjusted - archive_start)
+            if diff <= tolerance:
+                candidates.append((diff, f))
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(key=lambda c: c[0])
+    best_diff, best_video = candidates[0]
+    best_name = best_video.get("name")
+
+    for diff, video in candidates[1:]:
+        if video.get("name") != best_name and (diff - best_diff) < ambiguity_margin:
+            # Another video matches almost as well — refuse to auto-pick.
+            return None, None
+
+    return best_video, best_diff
 
 
 def _validate_user_filter_permission(current_user: User | None, created_by_id: int | None):
@@ -214,7 +283,7 @@ async def list_archives(
                 PrintArchive.created_at,
                 PrintArchive.content_hash,
                 func.lower(PrintArchive.print_name).label("print_name_lower"),
-            ).where(or_(*duplicate_group_conditions))
+            ).where(or_(*duplicate_group_conditions), PrintArchive.deleted_at.is_(None))
         )
 
         duplicate_groups_by_hash: dict[str, list[tuple[int, datetime]]] = defaultdict(list)
@@ -415,12 +484,15 @@ async def search_archives(
             select(PrintArchive)
             .options(selectinload(PrintArchive.project))
             .where(
-                (PrintArchive.print_name.ilike(like_pattern))
-                | (PrintArchive.filename.ilike(like_pattern))
-                | (PrintArchive.tags.ilike(like_pattern))
-                | (PrintArchive.notes.ilike(like_pattern))
-                | (PrintArchive.designer.ilike(like_pattern))
-                | (PrintArchive.filament_type.ilike(like_pattern))
+                (
+                    (PrintArchive.print_name.ilike(like_pattern))
+                    | (PrintArchive.filename.ilike(like_pattern))
+                    | (PrintArchive.tags.ilike(like_pattern))
+                    | (PrintArchive.notes.ilike(like_pattern))
+                    | (PrintArchive.designer.ilike(like_pattern))
+                    | (PrintArchive.filament_type.ilike(like_pattern))
+                ),
+                PrintArchive.deleted_at.is_(None),
             )
             .order_by(PrintArchive.created_at.desc())
         )
@@ -440,8 +512,12 @@ async def search_archives(
     if not matched_ids:
         return []
 
-    # Fetch full archive records for matched IDs
-    query = select(PrintArchive).options(selectinload(PrintArchive.project)).where(PrintArchive.id.in_(matched_ids))
+    # Fetch full archive records for matched IDs (excluding soft-deleted, #1343)
+    query = (
+        select(PrintArchive)
+        .options(selectinload(PrintArchive.project))
+        .where(PrintArchive.id.in_(matched_ids), PrintArchive.deleted_at.is_(None))
+    )
 
     # Apply additional filters
     if printer_id:
@@ -977,7 +1053,9 @@ async def get_all_tags(
     Returns a list of tags sorted by count (descending), then by name.
     """
     # Query all archives with non-null tags
-    result = await db.execute(select(PrintArchive.tags).where(PrintArchive.tags.isnot(None)))
+    result = await db.execute(
+        select(PrintArchive.tags).where(PrintArchive.tags.isnot(None), PrintArchive.deleted_at.is_(None))
+    )
     all_tags_rows = result.all()
 
     # Count occurrences of each tag
@@ -1018,7 +1096,9 @@ async def rename_tag(
         return {"affected": 0}
 
     # Find all archives containing the old tag
-    result = await db.execute(select(PrintArchive).where(PrintArchive.tags.isnot(None)))
+    result = await db.execute(
+        select(PrintArchive).where(PrintArchive.tags.isnot(None), PrintArchive.deleted_at.is_(None))
+    )
     archives = list(result.scalars().all())
 
     affected = 0
@@ -1054,7 +1134,9 @@ async def delete_tag(
     Returns the count of affected archives.
     """
     # Find all archives containing the tag
-    result = await db.execute(select(PrintArchive).where(PrintArchive.tags.isnot(None)))
+    result = await db.execute(
+        select(PrintArchive).where(PrintArchive.tags.isnot(None), PrintArchive.deleted_at.is_(None))
+    )
     archives = list(result.scalars().all())
 
     affected = 0
@@ -1081,7 +1163,11 @@ async def get_archive(
     """Get a specific archive."""
     service = ArchiveService(db)
     archive = await service.get_archive(archive_id)
-    if not archive:
+    # Soft-deleted archives are hidden from the UI (#1343) — surface them as
+    # 404 here too so a stale bookmark / direct URL doesn't expose a row the
+    # user has already removed. The hard-delete (?purge_stats=true) path
+    # bypasses this check by querying PrintArchive directly.
+    if not archive or archive.deleted_at is not None:
         raise HTTPException(404, "Archive not found")
 
     # Find duplicates
@@ -1230,15 +1316,29 @@ async def rescan_archive(
     if metadata.get("designer"):
         archive.designer = metadata["designer"]
 
-    # Calculate cost: prefer spool-based cost if available, else catalog-based
+    # Calculate cost: prefer spool-based cost if available, else catalog-based.
+    # When spool-based costs exist but don't cover every filament gram used
+    # (#1344), fall back to the global default rate for the untracked weight
+    # so the displayed cost still reflects the whole print.
 
     if archive.filament_used_grams and archive.filament_type:
+        default_cost_setting = await get_setting(db, "default_filament_cost")
+        default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
         usage_result = await db.execute(
-            select(func.sum(SpoolUsageHistory.cost)).where(SpoolUsageHistory.archive_id == archive.id)
+            select(
+                func.sum(SpoolUsageHistory.cost),
+                func.sum(SpoolUsageHistory.weight_used),
+            ).where(SpoolUsageHistory.archive_id == archive.id)
         )
-        usage_cost = usage_result.scalar()
+        usage_cost_row = usage_result.one()
+        usage_cost = usage_cost_row[0]
+        tracked_grams = float(usage_cost_row[1] or 0)
         if usage_cost is not None and usage_cost > 0:
-            archive.cost = float(Decimal(str(usage_cost)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            total_cost = float(usage_cost)
+            untracked_grams = max(0.0, archive.filament_used_grams - tracked_grams)
+            if untracked_grams > 0 and default_cost_per_kg > 0:
+                total_cost += (untracked_grams / 1000.0) * default_cost_per_kg
+            archive.cost = float(Decimal(str(total_cost)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
         else:
             primary_type = archive.filament_type.split(",")[0].strip()
             filament_result = await db.execute(select(Filament).where(Filament.type == primary_type).limit(1))
@@ -1250,9 +1350,6 @@ async def rescan_archive(
                     )
                 )
             else:
-                # Use default filament cost from settings
-                default_cost_setting = await get_setting(db, "default_filament_cost")
-                default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
                 archive.cost = float(
                     Decimal(str((archive.filament_used_grams / 1000) * default_cost_per_kg)).quantize(
                         Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -1284,18 +1381,34 @@ async def recalculate_all_costs(
     default_cost_setting = await get_setting(db, "default_filament_cost")
     default_cost_per_kg = float(default_cost_setting) if default_cost_setting else 25.0
 
-    # Pre-fetch all usage costs by archive_id
+    # Pre-fetch all usage costs and tracked weight by archive_id.
+    # Tracked weight is used to top-up the cost at the default rate for any
+    # filament grams not covered by an inventory spool (#1344).
     usage_costs_result = await db.execute(
-        select(SpoolUsageHistory.archive_id, func.sum(SpoolUsageHistory.cost)).group_by(SpoolUsageHistory.archive_id)
+        select(
+            SpoolUsageHistory.archive_id,
+            func.sum(SpoolUsageHistory.cost),
+            func.sum(SpoolUsageHistory.weight_used),
+        ).group_by(SpoolUsageHistory.archive_id)
     )
     usage_costs = usage_costs_result.fetchall()
-    cost_map = {row[0]: row[1] for row in usage_costs if row[0] is not None and row[1] is not None and row[1] > 0}
+    cost_map = {
+        row[0]: (row[1], float(row[2] or 0))
+        for row in usage_costs
+        if row[0] is not None and row[1] is not None and row[1] > 0
+    }
 
     updated = 0
     for archive in archives:
-        usage_cost = cost_map.get(archive.id)
-        if usage_cost is not None:
-            new_cost = round(usage_cost, 2)
+        usage = cost_map.get(archive.id)
+        if usage is not None:
+            usage_cost, tracked_grams = usage
+            total_cost = float(usage_cost)
+            archive_grams = float(archive.filament_used_grams or 0)
+            untracked_grams = max(0.0, archive_grams - tracked_grams)
+            if untracked_grams > 0 and default_cost_per_kg > 0:
+                total_cost += (untracked_grams / 1000.0) * default_cost_per_kg
+            new_cost = round(total_cost, 2)
         else:
             # Fallback: sum costs for old records by print_name
             usage_result = await db.execute(
@@ -1425,6 +1538,15 @@ async def backfill_content_hashes(
 @router.delete("/{archive_id}")
 async def delete_archive(
     archive_id: int,
+    purge_stats: bool = Query(
+        False,
+        description=(
+            "When false (default) the archive is soft-deleted — files removed "
+            "from disk, row hidden from listings, but its filament / energy / "
+            "time / cost contribution stays in Quick Stats. Set true to also "
+            "drop the row from statistics (#1343)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
@@ -1433,7 +1555,7 @@ async def delete_archive(
         )
     ),
 ):
-    """Delete an archive."""
+    """Delete an archive (soft by default; ``?purge_stats=true`` to hard-delete)."""
     user, can_modify_all = auth_result
 
     # Get archive first to check ownership
@@ -1448,9 +1570,14 @@ async def delete_archive(
             raise HTTPException(403, "You can only delete your own archives")
 
     service = ArchiveService(db)
-    if not await service.delete_archive(archive_id):
+    if purge_stats:
+        if not await service.delete_archive(archive_id):
+            raise HTTPException(404, "Archive not found")
+        return {"status": "deleted", "purged_from_stats": True}
+
+    if not await service.soft_delete_archive(archive_id):
         raise HTTPException(404, "Archive not found")
-    return {"status": "deleted"}
+    return {"status": "deleted", "purged_from_stats": False}
 
 
 @router.get("/{archive_id}/download")
@@ -1721,65 +1848,15 @@ async def scan_timelapse(
             matching_file = f
             break
 
-    # Strategy 2: Match by timestamp proximity
-    # Bambu timelapse filename uses the print START time (when recording began)
-    if not matching_file and (archive.started_at or archive.completed_at or archive.created_at):
-        import re
-        from datetime import datetime, timedelta
-
-        # Prefer started_at since video filename is the print start time
-        # Fall back to completed_at or created_at if started_at is not available
-        archive_start = archive.started_at
-        archive_end = archive.completed_at or archive.created_at
-        best_match = None
-        best_diff = timedelta(hours=24)  # Max 24 hour difference
-
-        for f in video_files:
-            fname = f.get("name", "")
-            # Parse timestamp from filename like "video_2025-11-24_03-17-40.mp4"
-            match = re.search(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", fname)
-            if match:
-                try:
-                    file_time = datetime.strptime(match.group(1), "%Y-%m-%d_%H-%M-%S")
-
-                    # Try multiple timezone offsets since printer timezone can vary
-                    # Common cases: local time (0), CST/UTC+8 (+8), or UTC (-local offset)
-                    for hour_offset in [0, 8, -8, 7, -7, 1, -1]:
-                        adjusted_file_time = file_time - timedelta(hours=hour_offset)
-
-                        # Check against start time (video filename = print start)
-                        if archive_start:
-                            diff = abs(adjusted_file_time - archive_start)
-                            if diff < best_diff:
-                                best_diff = diff
-                                best_match = f
-                                logger.debug(
-                                    f"Timelapse match candidate: {fname} with offset {hour_offset}h, "
-                                    f"diff from start: {diff}"
-                                )
-
-                        # Also check against end time with a buffer
-                        # (video timestamp should be BEFORE completion time)
-                        if archive_end:
-                            # The video timestamp should be within the print duration before completion
-                            if adjusted_file_time < archive_end:
-                                diff = archive_end - adjusted_file_time
-                                # Reasonable print duration: up to 48 hours
-                                if diff < timedelta(hours=48) and diff < best_diff:
-                                    best_diff = diff
-                                    best_match = f
-                                    logger.debug(
-                                        f"Timelapse match candidate (from end): {fname} with offset {hour_offset}h, "
-                                        f"diff: {diff}"
-                                    )
-
-                except ValueError:
-                    continue
-
-        # Accept match within 4 hours (more lenient for timezone issues)
-        if best_match and best_diff < timedelta(hours=4):
-            matching_file = best_match
-            logger.info("Matched timelapse by timestamp: %s (diff: %s)", best_match.get("name"), best_diff)
+    # Strategy 2: Match by timestamp proximity against print START time.
+    # Bambu timelapse filename embeds the print start time in printer-local clock.
+    # See _match_timelapse_by_timestamp for the offset-search rationale and why we
+    # intentionally don't try to match filename against end time here.
+    if not matching_file and archive.started_at:
+        candidate, diff = _match_timelapse_by_timestamp(video_files, archive.started_at)
+        if candidate is not None:
+            matching_file = candidate
+            logger.info("Matched timelapse by timestamp: %s (diff: %s)", candidate.get("name"), diff)
 
     # Strategy 3: Use file modification time from FTP listing
     # This handles cases where printer's filename timestamp is wrong but file mtime is correct

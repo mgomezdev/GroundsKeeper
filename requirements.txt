@@ -18,6 +18,9 @@ python-dotenv>=1.2.2
 paho-mqtt>=2.0.0
 aioftp>=0.22.0
 
+# Elegoo Centauri Carbon (SDCP WebSocket protocol)
+websocket-client>=1.7.0
+
 # Virtual Printer (emulates Bambu printer for slicer uploads)
 pyftpdlib>=2.0.0
 cryptography>=46.0.7
