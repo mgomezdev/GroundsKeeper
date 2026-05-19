@@ -42,6 +42,9 @@ class Printer(Base):
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
     # Excluded from automatic queue dispatch; can still receive jobs sent directly
     out_of_queue: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Type-specific config stored as JSON text. Validated against the matching
+    # PrinterTypeSchema.config_schema on write. Not used for Bambu (uses BambuPrinterConfig).
+    printer_config: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

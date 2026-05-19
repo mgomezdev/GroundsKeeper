@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 from collections.abc import Callable
 
 from backend.app.services.abstract_printer_client import AbstractPrinterClient
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_printer_config(printer) -> dict:
+    """Return the printer_config JSON dict, or {} if absent/malformed."""
+    raw = getattr(printer, "printer_config", None)
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning("Printer %d has malformed printer_config JSON; ignoring", printer.id)
+        return {}
 
 # Registry maps printer_type string → client class.
 # Each class is imported lazily to avoid circular imports at module load time.
@@ -67,14 +80,17 @@ def create_client(
             on_bed_temp_update=on_bed_temp_update,
         )
 
-    # Elegoo Centauri uses SDCP over WebSocket on a fixed port (3030)
+    # Elegoo Centauri uses SDCP over WebSocket; port defaults to 3030 (firmware-fixed)
     if printer_type == "elegoo_centauri":
-        cfg = printer.moonraker_config
-        api_key = cfg.api_key if cfg else None
+        pcfg = _parse_printer_config(printer)
+        if not pcfg:
+            # Fall back to moonraker_config for installs that haven't migrated yet
+            legacy = printer.moonraker_config
+            pcfg = {"port": 3030, "api_key": legacy.api_key if legacy else None}
         return cls(
             ip_address=printer.ip_address,
-            port=3030,  # SDCP WebSocket port is hardcoded in Elegoo firmware
-            api_key=api_key,
+            port=pcfg.get("port", 3030),
+            api_key=pcfg.get("api_key"),
             on_state_change=on_state_change,
             on_print_start=on_print_start,
             on_print_complete=on_print_complete,
@@ -82,15 +98,17 @@ def create_client(
         )
 
     # All remaining Moonraker-based clients share the same constructor shape
-    cfg = printer.moonraker_config
-    if cfg is None:
-        logger.warning("Printer %d (%s) has no MoonrakerPrinterConfig row; using defaults", printer.id, printer_type)
-    port = cfg.port if cfg else 7125
-    api_key = cfg.api_key if cfg else None
+    pcfg = _parse_printer_config(printer)
+    if not pcfg:
+        # Fall back to moonraker_config for installs that haven't migrated yet
+        legacy = printer.moonraker_config
+        if legacy is None:
+            logger.warning("Printer %d (%s) has no config; using defaults", printer.id, printer_type)
+        pcfg = {"port": legacy.port if legacy else 7125, "api_key": legacy.api_key if legacy else None}
     return cls(
         ip_address=printer.ip_address,
-        port=port,
-        api_key=api_key,
+        port=pcfg.get("port", 7125),
+        api_key=pcfg.get("api_key"),
         on_state_change=on_state_change,
         on_print_start=on_print_start,
         on_print_complete=on_print_complete,

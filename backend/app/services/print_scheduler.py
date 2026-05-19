@@ -19,13 +19,7 @@ from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.services.background_dispatch import background_dispatch
-from backend.app.services.bambu_ftp import (
-    cache_3mf_download,
-    delete_file_async,
-    get_ftp_retry_settings,
-    upload_file_async,
-    with_ftp_retry,
-)
+from backend.app.services.bambu_ftp import cache_3mf_download
 from backend.app.services.notification_service import notification_service
 from backend.app.services.printer_manager import printer_manager, supports_drying
 from backend.app.services.smart_plug_manager import smart_plug_manager
@@ -668,20 +662,14 @@ class PrintScheduler:
         if not status:
             return [f"{o.get('type', '?')} ({o.get('color_name') or o.get('color', '?')})" for o in force_overrides]
 
-        # Build set of loaded type+colour pairs from AMS and external spool
+        # Build set of loaded type+colour pairs via the client's get_loaded_filaments()
         loaded: set[tuple[str, str]] = set()
-        for ams_unit in status.raw_data.get("ams", []):
-            for tray in ams_unit.get("tray", []):
-                tray_type = tray.get("tray_type")
-                tray_color = tray.get("tray_color", "")
-                if tray_type:
-                    color_norm = tray_color.replace("#", "").lower()[:6]
-                    loaded.add((_canonical_filament_type(tray_type), color_norm))
-        for vt in status.raw_data.get("vt_tray") or []:
-            vt_type = vt.get("tray_type")
-            if vt_type:
-                color_norm = (vt.get("tray_color", "") or "").replace("#", "").lower()[:6]
-                loaded.add((_canonical_filament_type(vt_type), color_norm))
+        client = printer_manager.get_client(printer_id)
+        for f in (client.get_loaded_filaments() if client else []):
+            f_type = f.get("tray_type") or f.get("type", "")
+            f_color = (f.get("tray_color") or f.get("color", "")).replace("#", "").lower()[:6]
+            if f_type:
+                loaded.add((_canonical_filament_type(f_type), f_color))
 
         missing = []
         for o in force_overrides:
@@ -706,24 +694,13 @@ class PrintScheduler:
         if not status:
             return required_types  # Can't determine, assume all missing
 
-        # Collect all filament types loaded on this printer (AMS units + external spool)
-        # Use canonical types so equivalence groups (e.g. PA-CF/PA12-CF/PAHT-CF) match.
+        # Collect all filament types loaded on this printer via the client ABC.
         loaded_types: set[str] = set()
-
-        # Check AMS units (stored in raw_data["ams"])
-        ams_data = status.raw_data.get("ams", [])
-        if ams_data:
-            for ams_unit in ams_data:
-                for tray in ams_unit.get("tray", []):
-                    tray_type = tray.get("tray_type")
-                    if tray_type:
-                        loaded_types.add(_canonical_filament_type(tray_type))
-
-        # Check external spool(s) (virtual tray, stored in raw_data["vt_tray"] as list)
-        for vt in status.raw_data.get("vt_tray") or []:
-            vt_type = vt.get("tray_type")
-            if vt_type:
-                loaded_types.add(_canonical_filament_type(vt_type))
+        client = printer_manager.get_client(printer_id)
+        for f in (client.get_loaded_filaments() if client else []):
+            f_type = f.get("tray_type") or f.get("type", "")
+            if f_type:
+                loaded_types.add(_canonical_filament_type(f_type))
 
         # Find which required types are missing (using canonical type for equivalence)
         missing = []
@@ -742,20 +719,14 @@ class PrintScheduler:
         if not status:
             return 0
 
-        # Collect loaded filaments' type+color pairs
+        # Collect loaded filaments' type+color pairs via the client ABC.
         loaded: set[tuple[str, str]] = set()
-        for ams_unit in status.raw_data.get("ams", []):
-            for tray in ams_unit.get("tray", []):
-                tray_type = tray.get("tray_type")
-                tray_color = tray.get("tray_color", "")
-                if tray_type:
-                    color_norm = tray_color.replace("#", "").lower()[:6]
-                    loaded.add((tray_type.upper(), color_norm))
-        for vt in status.raw_data.get("vt_tray") or []:
-            vt_type = vt.get("tray_type")
-            if vt_type:
-                color_norm = (vt.get("tray_color", "") or "").replace("#", "").lower()[:6]
-                loaded.add((vt_type.upper(), color_norm))
+        client = printer_manager.get_client(printer_id)
+        for f in (client.get_loaded_filaments() if client else []):
+            f_type = f.get("tray_type") or f.get("type", "")
+            f_color = (f.get("tray_color") or f.get("color", "")).replace("#", "").lower()[:6]
+            if f_type:
+                loaded.add((f_type.upper(), f_color))
 
         matches = 0
         for o in overrides:
@@ -865,6 +836,10 @@ class PrintScheduler:
         Returns:
             List of loaded filament dicts with type, color, ams_id, tray_id, global_tray_id
         """
+        if status.raw_data is None:
+            # Non-Bambu printers expose a raw_data=None compat shim; no AMS to parse.
+            return []
+
         filaments = []
 
         # Get ams_extruder_map for dual-nozzle printers (H2D, H2D Pro)
@@ -1800,75 +1775,50 @@ class PrintScheduler:
         # files by name only (ftp://{filename}), so they must be in the root
         remote_path = f"/{remote_filename}"
 
-        # Get FTP retry settings
-        ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+        # Upload via the client's upload_file_async() — each implementation handles its own
+        # protocol (Bambu: FTP with optional retry, Centauri: HTTP multipart, Moonraker: HTTP).
+        printer_client = printer_manager.get_client(item.printer_id)
+        if not printer_client or not printer_client.file_upload_supported:
+            item.status = "failed"
+            item.error_message = "Printer does not support file upload"
+            item.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.error("Queue item %s: Printer %s does not support file upload", item.id, item.printer_id)
+            await self._power_off_if_needed(db, item)
+            return
 
         logger.info(
-            f"Queue item {item.id}: FTP upload starting - printer={printer.name} ({printer.model}), "
-            f"ip={printer.ip_address}, file={remote_filename}, local_path={file_path}, "
-            f"retry_enabled={ftp_retry_enabled}, retry_count={ftp_retry_count}, timeout={ftp_timeout}"
+            "Queue item %s: Uploading to %s (%s) via %s — file=%s, local_path=%s",
+            item.id, printer.name, printer.model, printer_client.printer_type, remote_filename, file_path,
         )
 
-        # Delete existing file if present (avoids 553 error on overwrite)
         try:
-            logger.debug("Queue item %s: Deleting existing file %s if present...", item.id, remote_path)
-            delete_result = await delete_file_async(
-                printer.ip_address,
-                printer.access_code,
-                remote_path,
-                socket_timeout=ftp_timeout,
-                printer_model=printer.model,
-            )
-            logger.debug("Queue item %s: Delete result: %s", item.id, delete_result)
+            await printer_client.delete_remote_file(remote_path)
         except Exception as e:
             logger.debug("Queue item %s: Delete failed (may not exist): %s", item.id, e)
 
         try:
-            if ftp_retry_enabled:
-                uploaded = await with_ftp_retry(
-                    upload_file_async,
-                    printer.ip_address,
-                    printer.access_code,
-                    file_path,
-                    remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
-                    max_retries=ftp_retry_count,
-                    retry_delay=ftp_retry_delay,
-                    operation_name=f"Upload print to {printer.name}",
-                )
-            else:
-                uploaded = await upload_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    file_path,
-                    remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
-                )
+            uploaded = await printer_client.upload_file_async(file_path, remote_path)
         except Exception as e:
             uploaded = False
-            logger.error("Queue item %s: FTP error: %s (type: %s)", item.id, e, type(e).__name__)
+            logger.error("Queue item %s: Upload error: %s (type: %s)", item.id, e, type(e).__name__)
 
         # Clean up injected temp file after upload attempt
         if injected_path and injected_path.exists():
             injected_path.unlink(missing_ok=True)
 
         if not uploaded:
-            error_msg = (
-                "Failed to upload file to printer. Check if SD card is inserted and properly formatted (FAT32/exFAT). "
+            item.status = "failed"
+            item.error_message = (
+                "Failed to upload file to printer. "
                 "See server logs for detailed diagnostics."
             )
-            item.status = "failed"
-            item.error_message = error_msg
             item.completed_at = datetime.now(timezone.utc)
             await db.commit()
             logger.error(
-                f"Queue item {item.id}: FTP upload failed - printer={printer.name}, model={printer.model}, "
-                f"ip={printer.ip_address}. Check logs above for storage diagnostics and specific error codes."
+                "Queue item %s: Upload failed — printer=%s, model=%s", item.id, printer.name, printer.model
             )
 
-            # Send failure notification
             await notification_service.on_queue_job_failed(
                 job_name=filename.replace(".gcode.3mf", "").replace(".3mf", ""),
                 printer_id=printer.id,
@@ -2001,14 +1951,9 @@ class PrintScheduler:
             except Exception:
                 pass  # Don't fail if MQTT fails
         else:
-            # Clean up uploaded file from SD card to prevent phantom prints
+            # Clean up uploaded file from the printer to prevent phantom prints
             try:
-                await delete_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    remote_path,
-                    printer_model=printer.model,
-                )
+                await printer_client.delete_remote_file(remote_path)
             except Exception:
                 pass  # Best-effort — don't fail the error handler
 

@@ -292,6 +292,59 @@ class MoonrakerClient(AbstractPrinterClient):
         return self.connected
 
     # ------------------------------------------------------------------ #
+    # File management (AbstractPrinterClient interface)                    #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def file_upload_supported(self) -> bool:
+        return True
+
+    def upload_file(self, file_data: bytes, filename: str) -> bool:
+        """Upload file bytes to Moonraker's virtual SD card."""
+        try:
+            resp = self._http.post(
+                "/server/files/upload",
+                files={"file": (filename, file_data, "application/octet-stream")},
+                data={"path": ""},
+            )
+            resp.raise_for_status()
+            return True
+        except Exception as exc:
+            logger.error("[%s] Moonraker upload failed: %s", self.ip_address, exc)
+            return False
+
+    async def upload_file_async(
+        self,
+        file_path,
+        remote_path: str,
+        progress_callback=None,
+        non_retry_exceptions: tuple = (),
+    ) -> bool:
+        import asyncio
+        filename = remote_path.lstrip("/")
+        file_path_obj = file_path if hasattr(file_path, "read_bytes") else __import__("pathlib").Path(file_path)
+        file_data = file_path_obj.read_bytes()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.upload_file, file_data, filename)
+
+    def get_capabilities(self):
+        from backend.app.services.abstract_printer_client import PrinterCapabilities
+        return PrinterCapabilities(
+            ams=False,
+            file_upload=True,
+            bed_levelling=True,
+            flow_calibration=False,
+            vibration_cali=False,
+            layer_inspect=False,
+            timelapse=False,
+            chamber_light=False,
+            gcode=True,
+            pause_resume=True,
+            skip_objects=False,
+            multi_nozzle=False,
+        )
+
+    # ------------------------------------------------------------------ #
     # Connection test (class-level, no instance required)                  #
     # ------------------------------------------------------------------ #
 

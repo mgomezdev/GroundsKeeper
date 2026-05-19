@@ -24,13 +24,7 @@ from backend.app.core.websocket import ws_manager
 from backend.app.models.library import LibraryFile
 from backend.app.models.printer import Printer
 from backend.app.services.archive import ArchiveService
-from backend.app.services.bambu_ftp import (
-    cache_3mf_download,
-    delete_file_async,
-    get_ftp_retry_settings,
-    upload_file_async,
-    with_ftp_retry,
-)
+from backend.app.services.bambu_ftp import cache_3mf_download
 from backend.app.services.preset_resolver import resolve_preset_ref
 from backend.app.services.printer_manager import printer_manager
 from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
@@ -582,17 +576,14 @@ class BackgroundDispatchService:
             remote_filename = remote_filename.replace(" ", "_")
             remote_path = f"/{remote_filename}"
 
-            ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+            client = printer_manager.get_client(job.printer_id)
             self._raise_if_cancel_requested(job)
 
             await self._set_active_message(job, f"Preparing upload to {printer_name}...")
-            await delete_file_async(
-                printer_ip,
-                printer_access_code,
-                remote_path,
-                socket_timeout=ftp_timeout,
-                printer_model=printer_model,
-            )
+            try:
+                await client.delete_remote_file(remote_path)
+            except Exception:
+                pass
 
             self._raise_if_cancel_requested(job)
 
@@ -619,31 +610,12 @@ class BackgroundDispatchService:
                             lambda u=uploaded, t=total: asyncio.create_task(self._set_active_upload_progress(job, u, t))
                         )
 
-                if ftp_retry_enabled:
-                    uploaded = await with_ftp_retry(
-                        upload_file_async,
-                        printer_ip,
-                        printer_access_code,
-                        file_path,
-                        remote_path,
-                        progress_callback=upload_progress_callback,
-                        socket_timeout=ftp_timeout,
-                        printer_model=printer_model,
-                        max_retries=ftp_retry_count,
-                        retry_delay=ftp_retry_delay,
-                        operation_name=f"Upload for reprint to {printer_name}",
-                        non_retry_exceptions=(DispatchJobCancelled,),
-                    )
-                else:
-                    uploaded = await upload_file_async(
-                        printer_ip,
-                        printer_access_code,
-                        file_path,
-                        remote_path,
-                        progress_callback=upload_progress_callback,
-                        socket_timeout=ftp_timeout,
-                        printer_model=printer_model,
-                    )
+                uploaded = await client.upload_file_async(
+                    file_path,
+                    remote_path,
+                    progress_callback=upload_progress_callback,
+                    non_retry_exceptions=(DispatchJobCancelled,),
+                )
 
                 if uploaded:
                     await self._set_active_upload_progress(job, 1, 1)
@@ -679,12 +651,10 @@ class BackgroundDispatchService:
                 )
 
                 if not started:
-                    await self._cleanup_sd_card_file(
-                        printer_ip,
-                        printer_access_code,
-                        remote_path,
-                        printer_model,
-                    )
+                    try:
+                        await client.delete_remote_file(remote_path)
+                    except Exception:
+                        pass
                     raise RuntimeError("Failed to start print")
 
                 # Register the archive's local 3MF in the cover-cache so the
@@ -786,17 +756,14 @@ class BackgroundDispatchService:
             remote_filename = remote_filename.replace(" ", "_")
             remote_path = f"/{remote_filename}"
 
-            ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+            client = printer_manager.get_client(job.printer_id)
             self._raise_if_cancel_requested(job)
 
             await self._set_active_message(job, f"Preparing upload to {printer_name}...")
-            await delete_file_async(
-                printer_ip,
-                printer_access_code,
-                remote_path,
-                socket_timeout=ftp_timeout,
-                printer_model=printer_model,
-            )
+            try:
+                await client.delete_remote_file(remote_path)
+            except Exception:
+                pass
 
             self._raise_if_cancel_requested(job)
 
@@ -823,31 +790,12 @@ class BackgroundDispatchService:
                             lambda u=uploaded, t=total: asyncio.create_task(self._set_active_upload_progress(job, u, t))
                         )
 
-                if ftp_retry_enabled:
-                    uploaded = await with_ftp_retry(
-                        upload_file_async,
-                        printer_ip,
-                        printer_access_code,
-                        file_path,
-                        remote_path,
-                        progress_callback=upload_progress_callback,
-                        socket_timeout=ftp_timeout,
-                        printer_model=printer_model,
-                        max_retries=ftp_retry_count,
-                        retry_delay=ftp_retry_delay,
-                        operation_name=f"Upload for print to {printer_name}",
-                        non_retry_exceptions=(DispatchJobCancelled,),
-                    )
-                else:
-                    uploaded = await upload_file_async(
-                        printer_ip,
-                        printer_access_code,
-                        file_path,
-                        remote_path,
-                        progress_callback=upload_progress_callback,
-                        socket_timeout=ftp_timeout,
-                        printer_model=printer_model,
-                    )
+                uploaded = await client.upload_file_async(
+                    file_path,
+                    remote_path,
+                    progress_callback=upload_progress_callback,
+                    non_retry_exceptions=(DispatchJobCancelled,),
+                )
 
                 if uploaded:
                     await self._set_active_upload_progress(job, 1, 1)
@@ -884,12 +832,10 @@ class BackgroundDispatchService:
                 )
 
                 if not started:
-                    await self._cleanup_sd_card_file(
-                        printer_ip,
-                        printer_access_code,
-                        remote_path,
-                        printer_model,
-                    )
+                    try:
+                        await client.delete_remote_file(remote_path)
+                    except Exception:
+                        pass
                     await db.rollback()
                     raise RuntimeError("Failed to start print")
 
@@ -1035,19 +981,6 @@ class BackgroundDispatchService:
                 f"(state still {pre_state}, gcode_file {current_gcode_file!r})"
             )
         return False
-
-    @staticmethod
-    async def _cleanup_sd_card_file(
-        printer_ip: str,
-        access_code: str,
-        remote_path: str,
-        printer_model: str | None,
-    ):
-        """Best-effort delete of uploaded file from printer SD card."""
-        try:
-            await delete_file_async(printer_ip, access_code, remote_path, printer_model=printer_model)
-        except Exception:
-            pass  # Best-effort — don't fail the error handler
 
     @staticmethod
     def _resolve_plate_id(file_path: Path, requested_plate_id: int | None) -> int:

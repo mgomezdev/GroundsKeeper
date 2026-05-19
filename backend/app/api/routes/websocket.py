@@ -17,10 +17,15 @@ def _serialize_state(state, printer_id: int) -> dict:
     from backend.app.services.printer_manager import _elegoo_state_to_dict, _moonraker_state_to_dict
 
     if isinstance(state, ElegooState):
-        return _elegoo_state_to_dict(state, printer_id)
-    if isinstance(state, MoonrakerState):
-        return _moonraker_state_to_dict(state, printer_id)
-    return printer_state_to_dict(state, printer_id, printer_manager.get_model(printer_id))
+        result = _elegoo_state_to_dict(state, printer_id)
+    elif isinstance(state, MoonrakerState):
+        result = _moonraker_state_to_dict(state, printer_id)
+    else:
+        result = printer_state_to_dict(state, printer_id, printer_manager.get_model(printer_id))
+    caps = printer_manager.get_capabilities_dict(printer_id)
+    if caps is not None:
+        result["capabilities"] = caps
+    return result
 
 
 @router.websocket("/ws")

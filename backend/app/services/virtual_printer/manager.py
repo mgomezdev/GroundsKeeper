@@ -874,6 +874,11 @@ class VirtualPrinterManager:
             if vp.id in self._instances:
                 continue
 
+            vp_printer_type = getattr(vp, "printer_type", "bambu") or "bambu"
+            if vp_printer_type == "elegoo_centauri":
+                await self._start_centauri_instance(vp)
+                continue
+
             if vp.mode == "proxy":
                 ip_info = proxy_ips.get(vp.id)
                 if not ip_info:
@@ -921,11 +926,33 @@ class VirtualPrinterManager:
                 await instance.start_server()
                 logger.info("Started server-mode VP: %s on %s", instance.name, vp.bind_ip)
 
+    async def _start_centauri_instance(self, vp) -> None:
+        from backend.app.services.virtual_printer.centauri_server import CentauriVirtualInstance
+
+        sdcp_port = getattr(vp, "sdcp_port", None) or 3030
+        upload_dir = self._base_dir / "uploads" / str(vp.id)
+        instance = CentauriVirtualInstance(
+            vp_id=vp.id,
+            name=vp.name,
+            mode=vp.mode,
+            sdcp_port=sdcp_port,
+            bind_ip=vp.bind_ip or "0.0.0.0",
+            target_printer_id=vp.target_printer_id,
+            auto_dispatch=vp.auto_dispatch,
+            queue_force_color_match=vp.queue_force_color_match,
+            upload_dir=upload_dir,
+            session_factory=self._session_factory,
+            printer_manager=self._printer_manager,
+        )
+        self._instances[vp.id] = instance
+        await instance.start_server()
+        logger.info("Started Centauri VP: %s on port %d", instance.name, sdcp_port)
+
     async def remove_instance(self, vp_id: int) -> None:
         """Stop and remove a single VP instance."""
         instance = self._instances.pop(vp_id, None)
         if instance:
-            if instance.is_proxy:
+            if hasattr(instance, "is_proxy") and instance.is_proxy:
                 await instance.stop_proxy()
             else:
                 await instance.stop_server()

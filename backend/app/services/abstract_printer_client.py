@@ -1,7 +1,33 @@
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import ClassVar
+
+
+@dataclass
+class PrinterCapabilities:
+    """Feature flags reported by each printer client.
+
+    All fields default to False. Each concrete implementation overrides only
+    the flags it supports. The frontend reads these from the printer status
+    response to enable/disable UI options without hardcoding printer type
+    strings.
+    """
+
+    ams: bool = False
+    file_upload: bool = False
+    bed_levelling: bool = False
+    flow_calibration: bool = False
+    vibration_cali: bool = False
+    layer_inspect: bool = False
+    timelapse: bool = False
+    chamber_light: bool = False
+    gcode: bool = False
+    pause_resume: bool = False
+    skip_objects: bool = False
+    multi_nozzle: bool = False
 
 
 @dataclass
@@ -141,6 +167,31 @@ class AbstractPrinterClient(ABC):
     def get_loaded_filaments(self) -> list[dict]:
         """Return loaded filaments in normalized format. Empty list means unknown."""
         return []
+
+    async def upload_file_async(
+        self,
+        file_path: Path,
+        remote_path: str,
+        progress_callback: Callable[[int, int], None] | None = None,
+        non_retry_exceptions: tuple[type, ...] = (),
+    ) -> bool:
+        """Async file upload to the printer. Returns True on success.
+
+        Subclasses override this to implement their vendor-specific upload
+        protocol (FTP for Bambu, HTTP multipart for Centauri, etc.).
+        ``non_retry_exceptions`` is forwarded to retry wrappers so callers
+        can prevent specific exceptions (e.g. DispatchJobCancelled) from
+        being retried.
+        """
+        return False
+
+    async def delete_remote_file(self, remote_path: str) -> bool:
+        """Delete a remote file before re-uploading. Best-effort, no-op by default."""
+        return False
+
+    def get_capabilities(self) -> PrinterCapabilities:
+        """Return the feature capability set for this printer implementation."""
+        return PrinterCapabilities()
 
     def on_forced_offline(self) -> None:
         """Called by PrinterManager when power loss is detected (e.g. smart plug).

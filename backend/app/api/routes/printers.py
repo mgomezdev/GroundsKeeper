@@ -392,6 +392,7 @@ async def get_printer_status(
         status_dict = _elegoo_state_to_dict(state, printer_id)
         status_dict["name"] = printer.name
         status_dict["awaiting_plate_clear"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        status_dict["capabilities"] = printer_manager.get_capabilities_dict(printer_id)
         return MoonrakerPrinterStatus(**status_dict)
 
     # Moonraker-based printers get their own slimmer response
@@ -402,6 +403,7 @@ async def get_printer_status(
         status_dict["cover_url"] = (
             printer.external_camera_url if printer.external_camera_enabled else None
         )
+        status_dict["capabilities"] = printer_manager.get_capabilities_dict(printer_id)
         return MoonrakerPrinterStatus(**status_dict)
 
     if not state:
@@ -702,6 +704,7 @@ async def get_printer_status(
             if state.fila_switch and state.fila_switch.installed
             else None
         ),
+        capabilities=printer_manager.get_capabilities_dict(printer_id),
     )
 
 

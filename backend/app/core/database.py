@@ -194,6 +194,7 @@ async def init_db():
         bambu_printer_config,
         moonraker_printer_config,
         printer,
+        printer_type_schema,
         project,
         project_bom,
         settings,
@@ -238,6 +239,9 @@ async def init_db():
     # Seed default catalog entries
     await seed_spool_catalog()
     await seed_color_catalog()
+
+    # Seed printer type schema definitions
+    await seed_printer_type_schemas()
 
 
 # B2: Module-level counter exposing the number of rows skipped during the last
@@ -2533,6 +2537,33 @@ async def run_migrations(conn):
     except (OperationalError, ProgrammingError):
         pass  # Already applied or columns don't exist yet on fresh installs
 
+    # Migration: Add printer_type and sdcp_port columns to virtual_printers for Centauri support
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN printer_type VARCHAR(20) DEFAULT 'bambu'")
+    await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN sdcp_port INTEGER")
+
+    # Migration: Add printer_config column to printers for type-specific JSON config
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN printer_config TEXT")
+
+    # Backfill: copy moonraker_config port/api_key into printer_config for non-Bambu printers
+    # that don't already have printer_config set.
+    try:
+        async with conn.begin_nested():
+            await conn.execute(
+                text("""
+                UPDATE printers
+                SET printer_config = json_object(
+                    'port', COALESCE(m.port, CASE WHEN printers.printer_type = 'elegoo_centauri' THEN 3030 ELSE 7125 END),
+                    'api_key', m.api_key
+                )
+                FROM moonraker_printer_configs m
+                WHERE m.printer_id = printers.id
+                  AND printers.printer_type != 'bambu'
+                  AND (printers.printer_config IS NULL OR printers.printer_config = '')
+                """)
+            )
+    except (OperationalError, ProgrammingError):
+        pass  # Already applied or no moonraker_printer_configs exist
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""
@@ -2834,3 +2865,97 @@ async def seed_color_catalog():
             )
         await session.commit()
         logger.info("Seeded %d default color catalog entries", len(DEFAULT_COLOR_CATALOG))
+
+
+async def seed_printer_type_schemas():
+    """Upsert canonical JSON Schema definitions for each printer type.
+
+    Runs on every startup so schema updates ship automatically without a
+    separate migration step.  Uses INSERT OR REPLACE (SQLite) / ON CONFLICT DO
+    UPDATE (PostgreSQL) to keep the table current.
+    """
+    import json
+    import logging
+
+    from sqlalchemy import select
+
+    from backend.app.models.printer_type_schema import PrinterTypeSchema
+
+    logger = logging.getLogger(__name__)
+
+    _SCHEMAS: list[tuple[str, str, dict]] = [
+        (
+            "bambu",
+            "Bambu Lab",
+            {
+                "type": "object",
+                "description": "Bambu credentials are stored in bambu_printer_configs, not printer_config.",
+                "properties": {
+                    "serial_number": {"type": "string"},
+                    "access_code": {"type": "string"},
+                },
+                "required": ["serial_number", "access_code"],
+                "additionalProperties": False,
+            },
+        ),
+        (
+            "elegoo_centauri",
+            "Elegoo Centauri",
+            {
+                "type": "object",
+                "properties": {
+                    "port": {"type": "integer", "default": 3030, "description": "SDCP WebSocket port"},
+                    "api_key": {"type": ["string", "null"], "description": "Optional API key"},
+                },
+                "required": ["port"],
+                "additionalProperties": False,
+            },
+        ),
+        (
+            "moonraker",
+            "Moonraker / Klipper",
+            {
+                "type": "object",
+                "properties": {
+                    "port": {"type": "integer", "default": 7125, "description": "Moonraker HTTP port"},
+                    "api_key": {"type": ["string", "null"], "description": "Optional Moonraker API key"},
+                },
+                "required": ["port"],
+                "additionalProperties": False,
+            },
+        ),
+        (
+            "snapmaker_u1",
+            "Snapmaker U1",
+            {
+                "type": "object",
+                "properties": {
+                    "port": {"type": "integer", "default": 7125, "description": "Moonraker HTTP port"},
+                    "api_key": {"type": ["string", "null"], "description": "Optional API key"},
+                },
+                "required": ["port"],
+                "additionalProperties": False,
+            },
+        ),
+    ]
+
+    async with async_session() as session:
+        for printer_type, display_name, schema_dict in _SCHEMAS:
+            result = await session.execute(
+                select(PrinterTypeSchema).where(PrinterTypeSchema.printer_type == printer_type)
+            )
+            row = result.scalar_one_or_none()
+            schema_text = json.dumps(schema_dict)
+            if row is None:
+                session.add(
+                    PrinterTypeSchema(
+                        printer_type=printer_type,
+                        display_name=display_name,
+                        config_schema=schema_text,
+                    )
+                )
+            else:
+                row.display_name = display_name
+                row.config_schema = schema_text
+        await session.commit()
+        logger.info("Upserted %d printer type schema definitions", len(_SCHEMAS))

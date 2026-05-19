@@ -376,6 +376,25 @@ export interface PrinterStatus {
   fan_speed?: number | null;    // Generic fan speed (part cooling, 0-100)
   speed_factor?: number | null; // Print speed factor (1.0 = 100%)
   machine_name?: string | null; // Vendor-reported model name (Elegoo only)
+  // Feature flags reported by the concrete printer client. Read these instead of
+  // branching on printer_type strings — the backend is the single source of truth.
+  capabilities?: PrinterCapabilities | null;
+}
+
+/** Feature flags for a printer, as reported by the concrete client. */
+export interface PrinterCapabilities {
+  ams: boolean;
+  file_upload: boolean;
+  bed_levelling: boolean;
+  flow_calibration: boolean;
+  vibration_cali: boolean;
+  layer_inspect: boolean;
+  timelapse: boolean;
+  chamber_light: boolean;
+  gcode: boolean;
+  pause_resume: boolean;
+  skip_objects: boolean;
+  multi_nozzle: boolean;
 }
 
 export interface PrinterCreate {

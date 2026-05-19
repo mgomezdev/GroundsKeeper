@@ -584,6 +584,47 @@ class ElegooCentauriClient(AbstractPrinterClient):
             logger.error("[%s] File upload failed: %s", self.ip_address, exc)
             return False
 
+    async def upload_file_async(
+        self,
+        file_path,
+        remote_path: str,
+        progress_callback=None,
+        non_retry_exceptions: tuple = (),
+    ) -> bool:
+        """Async file upload via HTTP multipart POST (runs sync upload in executor)."""
+        import asyncio
+        filename = remote_path.lstrip("/")
+        file_path_obj = file_path if hasattr(file_path, "read_bytes") else __import__("pathlib").Path(file_path)
+        file_data = file_path_obj.read_bytes()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.upload_file, file_data, filename)
+
+    async def delete_remote_file(self, remote_path: str) -> bool:
+        """Delete a remote file via SDCP Cmd 259 (best-effort)."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(None, self.delete_file, remote_path)
+        except Exception:
+            return False
+
+    def get_capabilities(self):
+        from backend.app.services.abstract_printer_client import PrinterCapabilities
+        return PrinterCapabilities(
+            ams=False,
+            file_upload=True,
+            bed_levelling=True,
+            flow_calibration=False,
+            vibration_cali=False,
+            layer_inspect=False,
+            timelapse=False,
+            chamber_light=True,
+            gcode=False,
+            pause_resume=True,
+            skip_objects=False,
+            multi_nozzle=False,
+        )
+
     def list_files(self, directory: str = "/local/") -> list[dict]:
         """Return normalized file list for *directory* via SDCP Cmd 258."""
         ok, data = self._send_with_response(_CMD_GET_FILE_LIST, {"Url": directory})

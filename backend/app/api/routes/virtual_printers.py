@@ -33,6 +33,7 @@ class VirtualPrinterCreate(BaseModel):
     name: str = "Bambuddy"
     enabled: bool = False
     mode: str = "immediate"
+    printer_type: str = "bambu"  # "bambu" | "elegoo_centauri"
     model: str | None = None
     access_code: str | None = None
     target_printer_id: int | None = None
@@ -40,12 +41,14 @@ class VirtualPrinterCreate(BaseModel):
     queue_force_color_match: bool = False
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
+    sdcp_port: int | None = None  # elegoo_centauri only; defaults to 3030
 
 
 class VirtualPrinterUpdate(BaseModel):
     name: str | None = None
     enabled: bool | None = None
     mode: str | None = None
+    printer_type: str | None = None
     model: str | None = None
     access_code: str | None = None
     target_printer_id: int | None = None
@@ -54,6 +57,7 @@ class VirtualPrinterUpdate(BaseModel):
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
     tailscale_disabled: bool | None = None
+    sdcp_port: int | None = None
 
 
 def _resolve_printer_model(printer_model: str | None) -> str | None:
@@ -81,11 +85,13 @@ def _vp_to_dict(vp, status: dict | None = None) -> dict:
     model_code = vp.model or DEFAULT_VIRTUAL_PRINTER_MODEL
     serial = _get_serial_for_model(model_code, vp.serial_suffix)
 
+    vp_printer_type = getattr(vp, "printer_type", "bambu") or "bambu"
     return {
         "id": vp.id,
         "name": vp.name,
         "enabled": vp.enabled,
         "mode": vp.mode,
+        "printer_type": vp_printer_type,
         "model": model_code,
         "model_name": VIRTUAL_PRINTER_MODELS.get(model_code, model_code),
         "access_code_set": bool(vp.access_code),
@@ -96,6 +102,7 @@ def _vp_to_dict(vp, status: dict | None = None) -> dict:
         "bind_ip": vp.bind_ip,
         "remote_interface_ip": vp.remote_interface_ip,
         "tailscale_disabled": vp.tailscale_disabled,
+        "sdcp_port": getattr(vp, "sdcp_port", None),
         "position": vp.position,
         "status": status or {"running": False, "pending_files": 0},
     }
@@ -136,29 +143,33 @@ async def create_virtual_printer(
     from backend.app.services.virtual_printer import VIRTUAL_PRINTER_MODELS, virtual_printer_manager
     from backend.app.services.virtual_printer.manager import DEFAULT_VIRTUAL_PRINTER_MODEL
 
+    # Validate printer_type
+    if body.printer_type not in ("bambu", "elegoo_centauri"):
+        return JSONResponse(status_code=400, content={"detail": "Invalid printer_type. Must be 'bambu' or 'elegoo_centauri'"})
+
+    is_centauri = body.printer_type == "elegoo_centauri"
+
     # Validate mode
     if body.mode not in ("immediate", "review", "print_queue", "proxy"):
         return JSONResponse(status_code=400, content={"detail": "Invalid mode"})
 
-    # Validate model
-    if body.model and body.model not in VIRTUAL_PRINTER_MODELS:
+    # Validate model (Bambu only)
+    if not is_centauri and body.model and body.model not in VIRTUAL_PRINTER_MODELS:
         return JSONResponse(
             status_code=400,
             content={"detail": f"Invalid model. Must be one of: {', '.join(VIRTUAL_PRINTER_MODELS.keys())}"},
         )
 
-    # Validate access code length
-    if body.access_code and len(body.access_code) != 8:
+    # Validate access code length (Bambu only)
+    if not is_centauri and body.access_code and len(body.access_code) != 8:
         return JSONResponse(status_code=400, content={"detail": "Access code must be exactly 8 characters"})
 
     # Validation when enabling
     if body.enabled:
-        if not body.bind_ip:
-            return JSONResponse(status_code=400, content={"detail": "Bind IP is required when enabling"})
-        if body.mode == "proxy":
+        if body.mode == "proxy" and not is_centauri:
             if not body.target_printer_id:
                 return JSONResponse(status_code=400, content={"detail": "Target printer is required for proxy mode"})
-        else:
+        elif not is_centauri:
             if not body.access_code:
                 return JSONResponse(status_code=400, content={"detail": "Access code is required when enabling"})
 
@@ -206,15 +217,17 @@ async def create_virtual_printer(
         name=body.name,
         enabled=body.enabled,
         mode=body.mode,
+        printer_type=body.printer_type,
         model=body.model
-        or _resolve_printer_model(target_printer.model if target_printer and body.mode == "proxy" else None)
-        or DEFAULT_VIRTUAL_PRINTER_MODEL,
+        or (None if is_centauri else _resolve_printer_model(target_printer.model if target_printer and body.mode == "proxy" else None))
+        or (None if is_centauri else DEFAULT_VIRTUAL_PRINTER_MODEL),
         access_code=body.access_code,
         target_printer_id=body.target_printer_id,
         auto_dispatch=body.auto_dispatch,
         queue_force_color_match=body.queue_force_color_match,
         bind_ip=body.bind_ip,
         remote_interface_ip=body.remote_interface_ip,
+        sdcp_port=body.sdcp_port,
         serial_suffix=new_suffix,
         position=next_pos,
     )
@@ -305,6 +318,12 @@ async def update_virtual_printer(
     # Apply updates
     if body.name is not None:
         vp.name = body.name
+    if body.printer_type is not None:
+        if body.printer_type not in ("bambu", "elegoo_centauri"):
+            return JSONResponse(status_code=400, content={"detail": "Invalid printer_type"})
+        vp.printer_type = body.printer_type
+    if body.sdcp_port is not None:
+        vp.sdcp_port = body.sdcp_port
     if body.mode is not None:
         if body.mode not in ("immediate", "review", "print_queue", "proxy"):
             return JSONResponse(status_code=400, content={"detail": "Invalid mode"})

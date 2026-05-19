@@ -364,6 +364,9 @@ class PrinterStatus(BaseModel):
     # Set for every active print regardless of plate count; the frontend decides
     # whether to render it based on current_archive_id's is_multi_plate flag.
     current_plate_id: int | None = None
+    # Feature capability flags reported by the concrete printer client.
+    # The frontend reads these instead of branching on printer_type strings.
+    capabilities: dict | None = None
 
 
 class MoonrakerPrinterStatus(BaseModel):
@@ -392,3 +395,4 @@ class MoonrakerPrinterStatus(BaseModel):
     machine_name: str | None = None  # vendor-reported model name (e.g. "Centauri Carbon")
     chamber_light: bool = False
     awaiting_plate_clear: bool = False
+    capabilities: dict | None = None

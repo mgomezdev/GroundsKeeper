@@ -4955,6 +4955,10 @@ class BambuMQTTClient(AbstractPrinterClient):
 
     file_listing_supported = True
 
+    @property
+    def file_upload_supported(self) -> bool:
+        return True
+
     def list_files(self, directory: str = "/") -> list[dict]:
         """List files via FTP. Returns normalized dicts with name/size/path/is_directory."""
         from backend.app.services.bambu_ftp import BambuFTPClient
@@ -4985,3 +4989,73 @@ class BambuMQTTClient(AbstractPrinterClient):
             finally:
                 ftp.disconnect()
         return None
+
+    async def upload_file_async(
+        self,
+        file_path,
+        remote_path: str,
+        progress_callback=None,
+        non_retry_exceptions: tuple = (),
+    ) -> bool:
+        from backend.app.services.bambu_ftp import (
+            delete_file_async,
+            get_ftp_retry_settings,
+            upload_file_async as _ftp_upload,
+            with_ftp_retry,
+        )
+        ftp_retry_enabled, ftp_retry_count, ftp_retry_delay, ftp_timeout = await get_ftp_retry_settings()
+        if ftp_retry_enabled:
+            return await with_ftp_retry(
+                _ftp_upload,
+                self.ip_address,
+                self.access_code,
+                file_path,
+                remote_path,
+                progress_callback=progress_callback,
+                socket_timeout=ftp_timeout,
+                printer_model=self.model,
+                max_retries=ftp_retry_count,
+                retry_delay=ftp_retry_delay,
+                non_retry_exceptions=non_retry_exceptions,
+            )
+        return await _ftp_upload(
+            self.ip_address,
+            self.access_code,
+            file_path,
+            remote_path,
+            progress_callback=progress_callback,
+            socket_timeout=ftp_timeout,
+            printer_model=self.model,
+        )
+
+    async def delete_remote_file(self, remote_path: str) -> bool:
+        from backend.app.services.bambu_ftp import delete_file_async, get_ftp_retry_settings
+        _, _, _, ftp_timeout = await get_ftp_retry_settings()
+        try:
+            return await delete_file_async(
+                self.ip_address,
+                self.access_code,
+                remote_path,
+                socket_timeout=ftp_timeout,
+                printer_model=self.model,
+            )
+        except Exception:
+            return False
+
+    def get_capabilities(self):
+        from backend.app.services.abstract_printer_client import PrinterCapabilities
+        multi_nozzle = bool(self.model and "H2" in self.model)
+        return PrinterCapabilities(
+            ams=True,
+            file_upload=True,
+            bed_levelling=True,
+            flow_calibration=True,
+            vibration_cali=True,
+            layer_inspect=True,
+            timelapse=True,
+            chamber_light=True,
+            gcode=True,
+            pause_resume=True,
+            skip_objects=True,
+            multi_nozzle=multi_nozzle,
+        )

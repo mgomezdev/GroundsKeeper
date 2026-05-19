@@ -14,6 +14,8 @@ export function getPrinterImage(model: string | null | undefined): string {
   if (m.includes('p1p')) return '/img/printers/p1p.png';
   if (m.includes('a1mini')) return '/img/printers/a1mini.png';
   if (m.includes('a1')) return '/img/printers/a1.png';
+  // Elegoo Centauri Carbon — use default until centauri.png is added to /img/printers/
+  if (m.includes('centauri')) return '/img/printers/default.png';
   return '/img/printers/default.png';
 }
 

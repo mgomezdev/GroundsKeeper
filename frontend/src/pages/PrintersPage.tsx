@@ -2695,6 +2695,26 @@ function PrinterCard({
                   </button>
                 );
               })()}
+              {/* Klippy State Badge — Moonraker/Elegoo Centauri only */}
+              {status?.connected && isMoonrakerPrinter && status.klippy_state && (
+                <span
+                  className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
+                    status.klippy_state === 'ready'
+                      ? 'bg-status-ok/20 text-status-ok'
+                      : status.klippy_state === 'startup'
+                      ? 'bg-status-warning/20 text-status-warning'
+                      : 'bg-status-error/20 text-status-error'
+                  }`}
+                  title={`Klippy: ${status.klippy_state}`}
+                >
+                  {status.klippy_state === 'ready' ? (
+                    <CheckCircle className="w-3 h-3" />
+                  ) : (
+                    <AlertCircle className="w-3 h-3" />
+                  )}
+                  {status.klippy_state}
+                </span>
+              )}
               {/* Maintenance Status Indicator */}
               {maintenanceInfo && (
                 <button

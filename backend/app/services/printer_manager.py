@@ -263,6 +263,9 @@ class PrinterManager:
                 logger.warning("No status serializer for printer_type=%s", client.printer_type)
                 return
             status_dict = serializer(state, printer_id, self.get_model(printer_id))
+            caps = self.get_capabilities_dict(printer_id)
+            if caps is not None:
+                status_dict["capabilities"] = caps
 
             await ws_manager.send_printer_status(printer_id, status_dict)
         except Exception as e:
@@ -449,6 +452,12 @@ class PrinterManager:
     def get_client(self, printer_id: int) -> AbstractPrinterClient | None:
         """Get the client for a printer."""
         return self._clients.get(printer_id)
+
+    def get_capabilities_dict(self, printer_id: int) -> dict | None:
+        """Return the printer's capabilities as a plain dict, or None if not connected."""
+        from dataclasses import asdict
+        client = self._clients.get(printer_id)
+        return asdict(client.get_capabilities()) if client else None
 
     def get_bambu_client(self, printer_id: int) -> BambuMQTTClient | None:
         """Get the client only if it is a BambuMQTTClient (for Bambu-specific operations)."""
