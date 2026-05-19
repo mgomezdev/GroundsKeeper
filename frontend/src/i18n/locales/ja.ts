@@ -1439,7 +1439,7 @@
       disabled: 'LDAP認証を無効にしました',
       feature1: 'LDAP資格情報でログインできます',
       feature2: 'ローカル管理者アカウントはフォールバックとして残ります',
-      feature3: 'ログイン時にLDAPグループがBamBuddyグループにマッピングされます',
+      feature3: 'ログイン時にLDAPグループがGroundsKeeperグループにマッピングされます',
       serverConfig: 'LDAPサーバー設定',
       serverUrl: 'サーバーURL',
       serverUrlHint: '標準はldap://、SSL接続はldaps://を使用',
@@ -1452,12 +1452,12 @@
       userFilterHint: '{username}はログインユーザー名に置き換えられます。OpenLDAPの場合は(uid={username})を使用。',
       advanced: '詳細設定',
       autoProvision: 'ユーザー自動作成',
-      autoProvisionHint: '初回LDAPログイン時にBamBuddyアカウントを自動作成',
+      autoProvisionHint: '初回LDAPログイン時にGroundsKeeperアカウントを自動作成',
       defaultGroup: 'デフォルトグループ',
       defaultGroupNone: '— なし（フォールバックなし）—',
       defaultGroupHint: 'LDAPユーザーが認証されたがマッピングされたLDAPグループに属していない場合に割り当てられるフォールバックグループ。空欄の場合、マッピングされていないユーザーは権限なしのままになります。',
       groupMapping: 'グループマッピング（JSON）',
-      groupMappingHint: 'LDAPグループDNをBamBuddyグループにマッピング。利用可能なグループ: ',
+      groupMappingHint: 'LDAPグループDNをGroundsKeeperグループにマッピング。利用可能なグループ: ',
       testConnection: '接続テスト',
       settingsSaved: 'LDAP設定を保存しました',
       errors: {
@@ -1824,8 +1824,8 @@
     // User management
     authentication: '認証',
     authEnabledDescription: 'ユーザー認証でインスタンスが保護されています',
-    authDisabledDescription: '認証を有効にして、ユーザーアカウントの作成、権限の管理、Bambuddyインスタンスのセキュリティを確保しましょう。',
-    authDisabledMessage: '認証を有効にして、ユーザーアカウントの作成、権限の管理、Bambuddyインスタンスのセキュリティを確保しましょう。',
+    authDisabledDescription: '認証を有効にして、ユーザーアカウントの作成、権限の管理、GroundsKeeperインスタンスのセキュリティを確保しましょう。',
+    authDisabledMessage: '認証を有効にして、ユーザーアカウントの作成、権限の管理、GroundsKeeperインスタンスのセキュリティを確保しましょう。',
     enableAuthentication: '認証を有効にする',
     currentUser: '現在のユーザー',
     changePassword: 'パスワードを変更',
@@ -1864,10 +1864,10 @@
     deleteGroup: 'グループを削除',
     // Modal: Disable auth
     disableAuthenticationTitle: '認証を無効化',
-    disableAuthenticationMessage: '認証を無効にしますか？Bambuddyインスタンスにログインなしでアクセスできるようになります。ユーザーはデータベースに残りますが、認証は無効になります。',
+    disableAuthenticationMessage: '認証を無効にしますか？GroundsKeeperインスタンスにログインなしでアクセスできるようになります。ユーザーはデータベースに残りますが、認証は無効になります。',
     disableAuthentication: '認証を無効化',
     // Additional settings
-    configureBambuddy: 'Bambuddyを設定',
+    configureGroundsKeeper: 'GroundsKeeperを設定',
     systemDefault: 'システムデフォルト',
     archiveSettings: 'アーカイブ設定',
     newWindow: '新しいウィンドウ',
@@ -2139,13 +2139,13 @@
     // Updates
     printerFirmware: 'プリンターファームウェア',
     checkFirmwareDescription: 'Bambu Labのプリンターファームウェア更新を確認',
-    bambuddySoftware: 'Bambuddyソフトウェア',
+    bambuddySoftware: 'GroundsKeeperソフトウェア',
     autoCheckDescription: '起動時に自動的に新しいバージョンを確認',
     checkNow: '今すぐ確認',
     updateAvailableVersion: 'アップデート利用可能: v{{version}}',
     releaseNotes: 'リリースノート',
     updateViaDocker: 'Docker Composeでアップデート:',
-    updateViaHomeAssistant: 'アップデートはHome Assistant Supervisorによって管理されます。Home Assistantの設定→アドオン→Bambuddyを開いて新しいバージョンをインストールしてください。',
+    updateViaHomeAssistant: 'アップデートはHome Assistant Supervisorによって管理されます。Home Assistantの設定→アドオン→GroundsKeeperを開いて新しいバージョンをインストールしてください。',
     installUpdate: 'アップデートをインストール',
     latestVersionRunning: '最新バージョンを使用しています',
     failedToCheckUpdates: 'アップデートの確認に失敗しました: {{error}}',
@@ -2155,8 +2155,8 @@
     goToBackup: 'バックアップへ',
     // Network tab
     externalUrl: '外部URL',
-    externalUrlDescription: 'Bambuddyがアクセス可能な外部URL。通知画像や外部連携に使用されます。',
-    bambuddyUrl: 'Bambuddy URL',
+    externalUrlDescription: 'GroundsKeeperがアクセス可能な外部URL。通知画像や外部連携に使用されます。',
+    bambuddyUrl: 'GroundsKeeper URL',
     externalUrlHint: 'プロトコルとポートを含めてください（例: http://192.168.1.100:8000）',
     ftpRetry: 'FTPリトライ',
     ftpRetryDescription: 'プリンターのWi-Fiが不安定な場合にFTP操作をリトライ。3MFダウンロード、印刷アップロード、タイムラプスダウンロード、ファームウェア更新に適用。',
@@ -2182,7 +2182,7 @@
     haConnectionFailed: 'Home Assistantへの接続に失敗しました。',
     // MQTT
     mqttPublishing: 'MQTTパブリッシュ',
-    mqttDescription: 'Node-RED、Home Assistant、その他の自動化システムとの統合のため、外部MQTTブローカーにBamBuddyイベントをパブリッシュ。',
+    mqttDescription: 'Node-RED、Home Assistant、その他の自動化システムとの統合のため、外部MQTTブローカーにGroundsKeeperイベントをパブリッシュ。',
     mqttEnableDescription: '外部MQTTブローカーにイベントをパブリッシュ',
     brokerHostname: 'ブローカーホスト名',
     port: 'ポート',
@@ -2315,7 +2315,7 @@
       enabledFromFile: 'At-rest encryption enabled (key loaded from data directory)',
       enabledGenerated: 'At-rest encryption enabled with auto-generated key',
       notConfigured: 'At-rest encryption not configured',
-      notConfiguredDesc: 'TOTP secrets and OIDC client_secrets are stored in plaintext. Set MFA_ENCRYPTION_KEY or restart Bambuddy with a writable data directory to auto-generate one.',
+      notConfiguredDesc: 'TOTP secrets and OIDC client_secrets are stored in plaintext. Set MFA_ENCRYPTION_KEY or restart GroundsKeeper with a writable data directory to auto-generate one.',
       allEncrypted: 'All MFA secrets are encrypted at rest.',
       legacyRowsLabel: 'Legacy plaintext rows',
       encryptedRowsLabel: 'Encrypted rows',
@@ -2323,7 +2323,7 @@
       backupHint: 'The auto-generated key is stored at DATA_DIR/.mfa_encryption_key and is included in local backup ZIPs. Keep your backups secure or set MFA_ENCRYPTION_KEY explicitly.',
       decryptionBrokenTitle: 'Encryption key missing',
       decryptionBrokenError: '{{count}} encrypted record(s) cannot be decrypted because the encryption key is no longer available. Restore the previous MFA_ENCRYPTION_KEY or DATA_DIR/.mfa_encryption_key to recover.',
-      migrationErrorWarning: '{{count}} 件のレガシー行を起動時に再暗号化できませんでした。サーバーログを確認し、Bambuddy を再起動して再試行してください。',
+      migrationErrorWarning: '{{count}} 件のレガシー行を起動時に再暗号化できませんでした。サーバーログを確認し、GroundsKeeper を再起動して再試行してください。',
     },
 
   },
@@ -2442,7 +2442,7 @@
 
   // Login page
   login: {
-    title: 'Bambuddy ログイン',
+    title: 'GroundsKeeper ログイン',
     subtitle: 'アカウントにサインイン',
     username: 'ユーザー名',
     usernamePlaceholder: 'ユーザー名を入力',
@@ -2488,7 +2488,7 @@
     sending: '送信中...',
     sendResetEmail: 'リセットメールを送信',
     howToReset: 'パスワードのリセット方法：',
-    resetStep1: 'Bambuddy管理者に連絡',
+    resetStep1: 'GroundsKeeper管理者に連絡',
     resetStep2: 'ユーザー管理でパスワードリセットを依頼',
     resetStep3: '管理者が新しい仮パスワードを設定',
     resetStep4: '新しいパスワードでログインし、設定で変更',
@@ -2499,7 +2499,7 @@
       methodAuthenticator: '認証アプリ',
       methodEmail: 'メール認証',
       methodBackup: 'バックアップコード',
-      instructionsTotp: '認証アプリを開いて、Bambuddy用の6桁のコードを入力してください。',
+      instructionsTotp: '認証アプリを開いて、GroundsKeeper用の6桁のコードを入力してください。',
       instructionsEmail: '6桁の確認コードをメールアドレスに送信しました。有効期限は10分です。',
       instructionsEmailNotSent: '下のボタンをクリックして、メールで確認コードを受け取ってください。',
       instructionsBackup: '8文字のバックアップコードをいずれか1つ入力してください。各コードは1回のみ使用可能です。',
@@ -2538,8 +2538,8 @@
 
   // Setup page
   setup: {
-    title: 'Bambuddy セットアップ',
-    subtitle: 'Bambuddyインスタンスの認証を設定',
+    title: 'GroundsKeeper セットアップ',
+    subtitle: 'GroundsKeeperインスタンスの認証を設定',
     enableAuth: '認証を有効化',
     adminAccount: '管理者アカウント',
     adminAccountDesc: '既に管理者ユーザーが存在する場合、既存の管理者アカウントを使用して認証が有効化されます。既存の管理者を使用する場合は下のフィールドを空のままにするか、新しい認証情報を入力して新しい管理者ユーザーを作成してください。',
@@ -2669,7 +2669,7 @@
   // Users management
   users: {
     title: 'ユーザー管理',
-    subtitle: 'ユーザーとBambuddyインスタンスへのアクセスを管理',
+    subtitle: 'ユーザーとGroundsKeeperインスタンスへのアクセスを管理',
     backToSettings: '設定に戻る',
     createUser: 'ユーザーを作成',
     noPermission: 'このページにアクセスする権限がありません。',
@@ -2824,7 +2824,7 @@
       loggedOut: 'ログアウトしました',
     },
     login: {
-      title: 'Bambuddy ログイン',
+      title: 'GroundsKeeper ログイン',
       subtitle: 'アカウントにサインイン',
       email: 'メールアドレス',
       password: 'パスワード',
@@ -3464,8 +3464,8 @@
     title: 'スプール在庫管理',
     subtitle: 'スプールを管理',
     spoolmanMixedContentTitle: 'Spoolman を HTTPS で読み込めません — ブラウザが混在コンテンツをブロックしています',
-    spoolmanMixedContentBody: 'Bambuddy はリバースプロキシ経由で HTTPS 配信されていますが、Spoolman の URL は HTTP のままです。ブラウザはセキュリティ上の理由で混在コンテンツをブロックするため、埋め込みの Spoolman UI を表示できません。Spoolman も HTTPS でアクセスできる必要があります。',
-    spoolmanMixedContentFixReverseProxy: 'Spoolman を Bambuddy と同じリバースプロキシ（Traefik / Nginx / Caddy）の後ろに HTTPS で配置し、設定で Spoolman URL を新しい HTTPS アドレスに更新してください。',
+    spoolmanMixedContentBody: 'GroundsKeeper はリバースプロキシ経由で HTTPS 配信されていますが、Spoolman の URL は HTTP のままです。ブラウザはセキュリティ上の理由で混在コンテンツをブロックするため、埋め込みの Spoolman UI を表示できません。Spoolman も HTTPS でアクセスできる必要があります。',
+    spoolmanMixedContentFixReverseProxy: 'Spoolman を GroundsKeeper と同じリバースプロキシ（Traefik / Nginx / Caddy）の後ろに HTTPS で配置し、設定で Spoolman URL を新しい HTTPS アドレスに更新してください。',
     spoolmanMixedContentFixOpenNewTab: '回避策として Spoolman を新しいタブで HTTP として開くことができます — 混在コンテンツのルールは埋め込みフレームのみに適用され、独立したタブは問題なく動作します。',
     spoolmanOpenInNewTab: 'Spoolman を新しいタブで開く',
     labels: {
@@ -3878,7 +3878,7 @@
     cloudProfiles: 'クラウドプロファイル',
     cloudProfilesDescription: 'Bambu Cloudからのフィラメント、プリンター、プロセスプリセット',
     appSettings: 'アプリ設定',
-    appSettingsDescription: 'Bambuddy設定（データベース全体）',
+    appSettingsDescription: 'GroundsKeeper設定（データベース全体）',
     spoolInventory: 'スプール在庫',
     spoolInventoryDescription: 'フィラメントスプール、使用履歴、コスト追跡',
     printArchives: '印刷アーカイブ',
@@ -3913,7 +3913,7 @@
 
     // Local Backup
     localBackup: 'ローカルバックアップ',
-    localBackupDescription: 'データベース、アーカイブ、アップロード、すべてのファイルを含むBambuddyデータの完全なバックアップを作成します。',
+    localBackupDescription: 'データベース、アーカイブ、アップロード、すべてのファイルを含むGroundsKeeperデータの完全なバックアップを作成します。',
     downloadBackupLabel: 'バックアップをダウンロード',
     completeBackupZip: '完全バックアップ: データベース + 全ファイル (ZIP)',
     download: 'ダウンロード',
@@ -3929,7 +3929,7 @@
     restoreConfirmMessage: '"{{filename}}"から復元してもよろしいですか？現在のデータベースとすべてのファイルが完全に置き換えられます。復元後にアプリケーションの再起動が必要です。',
     restoreConfirmButton: 'バックアップを復元',
     uploadingFile: 'バックアップファイルをアップロードしています...',
-    backupRestoredRestart: 'バックアップが復元されました。Bambuddyを再起動してください。',
+    backupRestoredRestart: 'バックアップが復元されました。GroundsKeeperを再起動してください。',
     failedToRestore: 'バックアップの復元に失敗しました。ファイル形式を確認してください。',
     reloadNow: '今すぐリロード',
     creatingBackup: 'バックアップを作成中',
@@ -4161,7 +4161,7 @@
       right: '右',
       notes: 'メモ（ローカル保存）',
       notesPlaceholder: 'このプロファイルのメモを追加...',
-      notesHelp: 'メモはBambuddyに保存され、プリンターには保存されません',
+      notesHelp: 'メモはGroundsKeeperに保存され、プリンターには保存されません',
       syncing: 'プリンターと同期中...',
       savingExtruder: 'エクストルーダーに保存中 {{current}}/{{total}}...',
       pleaseWait: 'お待ちください',
@@ -4216,7 +4216,7 @@
     },
     enable: {
       title: '仮想プリンターを有効化',
-      visibleInSlicer: 'スライサーの検出リストに「Bambuddy」として表示',
+      visibleInSlicer: 'スライサーの検出リストに「GroundsKeeper」として表示',
       proxyingTo: '{{name}}にプロキシ中',
       notActive: '非アクティブ',
     },
@@ -4247,7 +4247,7 @@
       configured: 'インターフェース上書き有効',
       optional: 'オプション — 自動検出IPが間違っている場合に使用（複数NIC、Docker、VPNなど）',
       placeholder: '自動検出（デフォルト）...',
-      hint: 'SSDPで広告され、TLS証明書に使用されるIPアドレスを上書きします。Bambuddyに複数のネットワークインターフェースがある場合に便利です。',
+      hint: 'SSDPで広告され、TLS証明書に使用されるIPアドレスを上書きします。GroundsKeeperに複数のネットワークインターフェースがある場合に便利です。',
     },
     mode: {
       title: 'モード',
@@ -4280,7 +4280,7 @@
     howItWorks: {
       title: '仕組み',
       step1: '同じLAN上では、仮想プリンターはスライサー（Bambu Studio / OrcaSlicer）に自動的に表示されます。他のネットワークからは、IPアドレスとアクセスコードで手動で追加してください。',
-      step2: 'アーカイブ、レビュー、キューモードでは、スライサーの「送信」ボタンを使用して3MFファイルをBambuddyにアップロードします。スライサーは「印刷成功」と表示しますが、ファイルは保存され、印刷はされません。',
+      step2: 'アーカイブ、レビュー、キューモードでは、スライサーの「送信」ボタンを使用して3MFファイルをGroundsKeeperにアップロードします。スライサーは「印刷成功」と表示しますが、ファイルは保存され、印刷はされません。',
       step3: 'プロキシモードでは、仮想プリンターはすべてのトラフィックを実際のプリンターに転送します。直接接続されているかのように印刷がすぐに開始されます。',
     },
     status: {
@@ -5025,7 +5025,7 @@
   // Email Settings
   emailSettings: {
     placeholders: {
-      fromName: 'BamBuddy',
+      fromName: 'GroundsKeeper',
     },
   },
 
@@ -5319,7 +5319,7 @@
       upToDate: '最新です',
       includeBeta: 'ベータ版を含む',
       systemConfig: 'バックエンドと認証',
-      backendUrl: 'BambuddyバックエンドURL',
+      backendUrl: 'GroundsKeeperバックエンドURL',
       apiToken: 'APIトークン',
       apiTokenPlaceholder: 'APIトークンを入力',
       saveConfig: '設定を保存',
@@ -5435,7 +5435,7 @@
     pollInterval: 'ポーリング間隔(秒)',
     pollIntervalHint: '印刷中に各プリンターをチェックする頻度。最小 5 秒、最大 120 秒。',
     externalUrlMissing: 'External URL is not set.',
-    externalUrlHint: 'The ML API fetches the camera snapshot by URL. Set the External URL in General settings so the ML API container can reach Bambuddy.',
+    externalUrlHint: 'The ML API fetches the camera snapshot by URL. Set the External URL in General settings so the ML API container can reach GroundsKeeper.',
     perPrinterTitle: '監視対象プリンター',
     perPrinterHint: '検出サービスが監視するプリンターを選択します。',
     monitorAll: '接続されているすべてのプリンターを監視',
@@ -5449,7 +5449,7 @@
   },
   makerworld: {
     title: 'MakerWorld',
-    description: 'MakerWorld モデルの URL を貼り付けると、Bambu Handy アプリを開かなくても Bambuddy から直接インポート・印刷できます。',
+    description: 'MakerWorld モデルの URL を貼り付けると、Bambu Handy アプリを開かなくても GroundsKeeper から直接インポート・印刷できます。',
     pasteUrlHeader: 'MakerWorld からインポート',
     pasteUrlPlaceholder: 'https://makerworld.com/en/models/… または任意の MakerWorld リンク',
     resolveButton: '読み込む',
@@ -5472,7 +5472,7 @@
     alsoCompatible: 'Also marked compatible: {{printers}}',
     importToLibrary: '保存',
     sliceIn: '保存して {{slicer}} でスライス',
-    disclaimer: 'MakerWorld 連携はコミュニティで文書化された API エンドポイントを使用しています。Bambuddy は MakerWorld または Bambu Lab との提携・承認関係はありません。',
+    disclaimer: 'MakerWorld 連携はコミュニティで文書化された API エンドポイントを使用しています。GroundsKeeper は MakerWorld または Bambu Lab との提携・承認関係はありません。',
     lastImportSuccess: 'ライブラリにインポートしました',
     lastImportAlreadyInLibrary: '既にライブラリに存在します',
     viewInLibrary: 'ファイルマネージャーで表示',
@@ -5568,7 +5568,7 @@
     effect1: 'Matching files are moved to Trash — they are not deleted from disk yet.',
     effect2: 'You can restore them from Trash at any time until the retention window expires.',
     effect3: 'After retention, the trash sweeper permanently removes them from disk.',
-    effect4: 'Files in external (linked) folders are skipped — Bambuddy never deletes bytes it does not own.',    previewLoading: '対象ファイル数を確認中…',
+    effect4: 'Files in external (linked) folders are skipped — GroundsKeeper never deletes bytes it does not own.',    previewLoading: '対象ファイル数を確認中…',
     previewFailed: 'プレビューを取得できませんでした。',
     previewSummary: '{{count}} 件 · {{size}} がゴミ箱に移動されます',
     andMore: '…ほか {{count}} 件',

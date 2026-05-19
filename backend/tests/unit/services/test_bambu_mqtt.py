@@ -4857,3 +4857,218 @@ class TestAmsFilamentSettingExternalSpoolEncoding:
         # a future capture-driven change shows up in the diff.
         assert cmd["tray_id"] == 0
         assert cmd["slot_id"] == 0
+
+
+# =============================================================================
+# Print control methods
+# =============================================================================
+
+
+class TestBambuPrintControl:
+    """Tests for stop / pause / resume / gcode control methods."""
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    # ── stop ─────────────────────────────────────────────────────────────────
+
+    def test_stop_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.stop_print() is False
+
+    def test_stop_print_publishes_stop_command(self, mqtt_client):
+        result = mqtt_client.stop_print()
+
+        assert result is True
+        mqtt_client._client.publish.assert_called_once()
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "stop"
+
+    # ── pause ────────────────────────────────────────────────────────────────
+
+    def test_pause_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.pause_print() is False
+
+    def test_pause_print_publishes_pause_command(self, mqtt_client):
+        result = mqtt_client.pause_print()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "pause"
+
+    # ── resume ───────────────────────────────────────────────────────────────
+
+    def test_resume_print_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.resume_print() is False
+
+    def test_resume_print_publishes_resume_command(self, mqtt_client):
+        result = mqtt_client.resume_print()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "resume"
+
+    # ── print speed ───────────────────────────────────────────────────────────
+
+    def test_set_print_speed_valid_modes(self, mqtt_client):
+        for mode in (1, 2, 3, 4):
+            mqtt_client._client.publish.reset_mock()
+            result = mqtt_client.set_print_speed(mode)
+            assert result is True
+            payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+            assert payload["print"]["command"] == "print_speed"
+            assert payload["print"]["param"] == str(mode)
+
+    def test_set_print_speed_invalid_returns_false(self, mqtt_client):
+        assert mqtt_client.set_print_speed(0) is False
+        assert mqtt_client.set_print_speed(5) is False
+        mqtt_client._client.publish.assert_not_called()
+
+    # ── gcode ─────────────────────────────────────────────────────────────────
+
+    def test_send_gcode_publishes_gcode_line(self, mqtt_client):
+        result = mqtt_client.send_gcode("G28")
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "gcode_line"
+        assert payload["print"]["param"] == "G28"
+
+    def test_send_gcode_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.send_gcode("G28") is False
+
+    # ── home (ABC default → send_gcode G28) ──────────────────────────────────
+
+    def test_home_sends_g28_via_gcode_line(self, mqtt_client):
+        result = mqtt_client.home()
+
+        assert result is True
+        payload = json.loads(mqtt_client._client.publish.call_args[0][1])
+        assert payload["print"]["command"] == "gcode_line"
+        assert "G28" in payload["print"]["param"]
+
+
+# =============================================================================
+# Chamber light
+# =============================================================================
+
+
+class TestBambuChamberLight:
+    """Tests for set_chamber_light — must publish for both LED nodes."""
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    def test_chamber_light_on_publishes_twice(self, mqtt_client):
+        result = mqtt_client.set_chamber_light(True)
+
+        assert result is True
+        assert mqtt_client._client.publish.call_count == 2
+
+    def test_chamber_light_on_both_nodes_set_to_on(self, mqtt_client):
+        mqtt_client.set_chamber_light(True)
+
+        nodes = set()
+        for call in mqtt_client._client.publish.call_args_list:
+            payload = json.loads(call[0][1])
+            nodes.add(payload["system"]["led_node"])
+            assert payload["system"]["led_mode"] == "on"
+        assert nodes == {"chamber_light", "chamber_light2"}
+
+    def test_chamber_light_off_both_nodes_set_to_off(self, mqtt_client):
+        mqtt_client.set_chamber_light(False)
+
+        for call in mqtt_client._client.publish.call_args_list:
+            payload = json.loads(call[0][1])
+            assert payload["system"]["led_mode"] == "off"
+
+    def test_chamber_light_returns_false_when_disconnected(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        c = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert c.set_chamber_light(True) is False
+
+
+# =============================================================================
+# Capabilities
+# =============================================================================
+
+
+class TestBambuCapabilities:
+
+    @pytest.fixture
+    def caps(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        return BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678").get_capabilities()
+
+    def test_chamber_light_true(self, caps):
+        assert caps.chamber_light is True
+
+    def test_pause_resume_true(self, caps):
+        assert caps.pause_resume is True
+
+    def test_bed_levelling_true(self, caps):
+        assert caps.bed_levelling is True
+
+    def test_timelapse_true(self, caps):
+        assert caps.timelapse is True
+
+    def test_ams_true(self, caps):
+        assert caps.ams is True
+
+    def test_gcode_true(self, caps):
+        assert caps.gcode is True
+
+    def test_multi_nozzle_true_for_h2d(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678", model="H2D")
+        assert client.get_capabilities().multi_nozzle is True
+
+    def test_multi_nozzle_false_for_x1c(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678", model="X1C")
+        assert client.get_capabilities().multi_nozzle is False
+
+    def test_multi_nozzle_false_when_no_model(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="X", access_code="12345678")
+        assert client.get_capabilities().multi_nozzle is False

@@ -1258,7 +1258,7 @@ export function SettingsPage() {
             <SettingsIcon className="w-7 h-7 text-bambu-green" />
             {t('settings.title')}
           </h1>
-          <p className="text-bambu-gray mt-1">{t('settings.configureBambuddy')}</p>
+          <p className="text-bambu-gray mt-1">{t('settings.configureGroundsKeeper')}</p>
         </div>
         {/* Cross-tab search */}
         <div className="relative sm:w-72">
@@ -2961,13 +2961,13 @@ export function SettingsPage() {
                     </label>
                     <input
                       type="text"
-                      value={localSettings.mqtt_topic_prefix ?? 'bambuddy'}
+                      value={localSettings.mqtt_topic_prefix ?? 'groundskeeper'}
                       onChange={(e) => updateSetting('mqtt_topic_prefix', e.target.value)}
-                      placeholder="bambuddy"
+                      placeholder="groundskeeper"
                       className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                     />
                     <p className="text-xs text-bambu-gray mt-1">
-                      {t('settings.topicPrefixHint', { prefix: localSettings.mqtt_topic_prefix || 'bambuddy' })}
+                      {t('settings.topicPrefixHint', { prefix: localSettings.mqtt_topic_prefix || 'groundskeeper' })}
                     </p>
                   </div>
 
@@ -3043,12 +3043,12 @@ export function SettingsPage() {
                   <div className="pt-2 border-t border-bambu-dark-tertiary">
                     <p className="text-sm text-white mb-2">{t('settings.availableMetrics')}</p>
                     <div className="text-xs text-bambu-gray space-y-1">
-                      <p><code className="text-orange-400">bambuddy_printer_connected</code> - {t('settings.metricsConnectionStatus')}</p>
-                      <p><code className="text-orange-400">bambuddy_printer_state</code> - {t('settings.metricsPrinterState')}</p>
-                      <p><code className="text-orange-400">bambuddy_print_progress</code> - {t('settings.metricsPrintProgress')}</p>
-                      <p><code className="text-orange-400">bambuddy_bed_temp_celsius</code> - {t('settings.metricsBedTemp')}</p>
-                      <p><code className="text-orange-400">bambuddy_nozzle_temp_celsius</code> - {t('settings.metricsNozzleTemp')}</p>
-                      <p><code className="text-orange-400">bambuddy_prints_total</code> - {t('settings.metricsPrintsTotal')}</p>
+                      <p><code className="text-orange-400">groundskeeper_printer_connected</code> - {t('settings.metricsConnectionStatus')}</p>
+                      <p><code className="text-orange-400">groundskeeper_printer_state</code> - {t('settings.metricsPrinterState')}</p>
+                      <p><code className="text-orange-400">groundskeeper_print_progress</code> - {t('settings.metricsPrintProgress')}</p>
+                      <p><code className="text-orange-400">groundskeeper_bed_temp_celsius</code> - {t('settings.metricsBedTemp')}</p>
+                      <p><code className="text-orange-400">groundskeeper_nozzle_temp_celsius</code> - {t('settings.metricsNozzleTemp')}</p>
+                      <p><code className="text-orange-400">groundskeeper_prints_total</code> - {t('settings.metricsPrintsTotal')}</p>
                       <p className="text-bambu-gray/70 italic">{t('settings.metricsMore')}</p>
                     </div>
                   </div>

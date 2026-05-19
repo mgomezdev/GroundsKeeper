@@ -4199,7 +4199,7 @@ export const api = {
 
     // Get filename from Content-Disposition header
     const contentDisposition = response.headers.get('Content-Disposition');
-    let filename = 'bambuddy-backup.zip';
+    let filename = 'groundskeeper-backup.zip';
     if (contentDisposition) {
       const match = contentDisposition.match(/filename=([^;]+)/);
       if (match) filename = match[1].trim().replace(/^"(.*)"$/, '$1');
@@ -5574,7 +5574,7 @@ export const api = {
     }>(`/library/files/${fileId}/filament-requirements${qs.toString() ? `?${qs}` : ''}`);
   },
 
-  /** Poll the sidecar's per-request progress snapshot via the Bambuddy
+  /** Poll the sidecar's per-request progress snapshot via the GroundsKeeper
    * proxy. Used by the SliceModal's filament-discovery path so the inline
    * spinner + persistent toast can show "Generating G-code (45%)" while
    * the preview slice runs. Returns null on 404 (sidecar doesn't yet
@@ -6484,7 +6484,7 @@ export const supportApi = {
     }
     // Get filename from Content-Disposition header or use default
     const disposition = response.headers.get('Content-Disposition');
-    const filename = parseContentDispositionFilename(disposition) || 'bambuddy-support.zip';
+    const filename = parseContentDispositionFilename(disposition) || 'groundskeeper-support.zip';
 
     // Download the blob
     const blob = await response.blob();

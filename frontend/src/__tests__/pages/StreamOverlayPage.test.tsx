@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for the StreamOverlayPage component.
  */
 
@@ -107,11 +107,11 @@ describe('StreamOverlayPage', () => {
       });
     });
 
-    it('shows Bambuddy logo', async () => {
+    it('shows GroundsKeeper logo', async () => {
       renderOverlayPage(1);
 
       await waitFor(() => {
-        expect(screen.getByAltText('Bambuddy')).toBeInTheDocument();
+        expect(screen.getByAltText('GroundsKeeper')).toBeInTheDocument();
       });
     });
 
@@ -119,7 +119,7 @@ describe('StreamOverlayPage', () => {
       renderOverlayPage(1);
 
       await waitFor(() => {
-        const logo = screen.getByAltText('Bambuddy');
+        const logo = screen.getByAltText('GroundsKeeper');
         const link = logo.closest('a');
         expect(link).toHaveAttribute('href', 'https://github.com/maziggy/bambuddy');
       });
@@ -185,7 +185,7 @@ describe('StreamOverlayPage', () => {
 
       await waitFor(() => {
         // Just verify it renders without error
-        expect(screen.getByAltText('Bambuddy')).toBeInTheDocument();
+        expect(screen.getByAltText('GroundsKeeper')).toBeInTheDocument();
       });
     });
 

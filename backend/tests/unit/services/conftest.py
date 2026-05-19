@@ -16,7 +16,13 @@ import pytest
 
 from backend.app.services.bambu_ftp import BambuFTPClient
 from backend.app.services.virtual_printer.certificate import CertificateService
-from backend.tests.unit.services.mock_ftp_server import MockBambuFTPServer
+
+try:
+    from backend.tests.unit.services.mock_ftp_server import MockBambuFTPServer
+    _FTP_SERVER_AVAILABLE = True
+except ImportError:
+    _FTP_SERVER_AVAILABLE = False
+    MockBambuFTPServer = None  # type: ignore[assignment,misc]
 
 BAMBU_DIRS = ("cache", "timelapse", "model", "data", "data/Metadata")
 
@@ -49,6 +55,8 @@ def ftp_root(tmp_path_factory):
 @pytest.fixture(scope="class")
 def ftp_server(ftp_certs, ftp_root):
     """Start a mock implicit FTPS server, yield it, stop on cleanup."""
+    if not _FTP_SERVER_AVAILABLE:
+        pytest.skip("pyftpdlib TLS_FTPHandler not available in this environment")
     cert_path, key_path = ftp_certs
     port = _find_free_port()
     server = MockBambuFTPServer(

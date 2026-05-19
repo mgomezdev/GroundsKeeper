@@ -2819,6 +2819,9 @@ async def set_chamber_light(
     if not client:
         raise HTTPException(400, "Printer not connected")
 
+    if not client.get_capabilities().chamber_light:
+        raise HTTPException(422, "This printer does not support chamber light control")
+
     success = client.set_chamber_light(on)
     if not success:
         raise HTTPException(500, "Failed to control chamber light")

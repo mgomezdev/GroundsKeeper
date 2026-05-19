@@ -112,6 +112,7 @@ class ElegooState:
     fan_model: int = 0            # part-cooling fan 0-100
     fan_aux: int = 0              # auxiliary fan 0-100
     chamber_light: bool = False   # LightStatus.SecondLight
+    rgb_light: list = field(default_factory=lambda: [0, 0, 0])  # LightStatus.RgbLight
     video_url: str | None = None  # populated on first successful Cmd 386 response
     firmware_version: str | None = None
     machine_name: str | None = None
@@ -296,6 +297,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
         light = status.get("LightStatus", {})
         s.chamber_light = bool(light.get("SecondLight", 0))
+        if "RgbLight" in light:
+            s.rgb_light = light["RgbLight"]
 
         # Carry over persistent attrs not present in the status message
         with self._lock:
@@ -537,8 +540,14 @@ class ElegooCentauriClient(AbstractPrinterClient):
         self._send(_CMD_EDIT_VIDEO_STREAMING, {"Enable": 0})
 
     def set_chamber_light(self, on: bool) -> bool:
-        # EDIT_PRINTER_STATUS_DATA (403): send LightStatus with desired SecondLight value
-        success = self._send(_CMD_EDIT_STATUS_DATA, {"LightStatus": {"SecondLight": on, "RgbLight": [0, 0, 0]}}, wait_ack=True)
+        # EDIT_PRINTER_STATUS_DATA (403): preserve current RgbLight to avoid resetting accent colour
+        with self._lock:
+            rgb = list(self.state.rgb_light)
+        success = self._send(
+            _CMD_EDIT_STATUS_DATA,
+            {"LightStatus": {"SecondLight": on, "RgbLight": rgb}},
+            wait_ack=True,
+        )
         if success:
             with self._lock:
                 self.state.chamber_light = on
