@@ -40,17 +40,15 @@ Default returns empty list. Each concrete client overrides it:
 |---|---|
 | `BambuMQTTClient` | `serial_number` (text, required), `access_code` (password, required) |
 | `ElegooCentauriClient` | `port` (number, required, default=3030) |
-| `MoonrakerClient` | `port` (number, required, default=7125), `api_key` (text, required=False) |
-| `SnapmakerU1Client` | `port` (number, required, default=7125), `api_key` (text, required=False) |
+
+Moonraker and Snapmaker U1 are out of scope for this implementation. The registry pattern is designed so they can be added later by following the same steps.
 
 ### Registry — `backend/app/services/printer_registry.py` (new file)
 
 ```python
 PRINTER_CLIENT_REGISTRY: dict[str, tuple[str, type[AbstractPrinterClient]]] = {
-    "bambu":           ("Bambu Lab",          BambuMQTTClient),
-    "elegoo_centauri": ("Elegoo Centauri",    ElegooCentauriClient),
-    "moonraker":       ("Moonraker / Klipper", MoonrakerClient),
-    "snapmaker_u1":    ("Snapmaker U1",        SnapmakerU1Client),
+    "bambu":           ("Bambu Lab",       BambuMQTTClient),
+    "elegoo_centauri": ("Elegoo Centauri", ElegooCentauriClient),
 }
 ```
 
