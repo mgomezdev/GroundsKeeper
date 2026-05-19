@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   // Navigation
   nav: {
     printers: '打印机',

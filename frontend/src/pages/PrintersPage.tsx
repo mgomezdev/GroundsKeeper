@@ -1,103 +1,40 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
-import { compareFwVersions } from '../utils/firmwareVersion';
-import { formatPrintName } from '../utils/printName';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Plus,
-  Link,
-  Unlink,
-  Signal,
-  Clock,
-  MoreVertical,
-  Trash2,
-  RefreshCw,
-  RotateCw,
-  Box,
-  HardDrive,
-  AlertTriangle,
-  AlertCircle,
-  Terminal,
   Power,
-  PowerOff,
-  Zap,
-  Wrench,
   ChevronDown,
   Filter,
-  Pencil,
   ArrowUp,
   ArrowDown,
-  Layers,
-  Video,
-  Search,
   Loader2,
-  Square,
-  Pause,
-  Play,
   X,
-  Fan,
-  Wind,
-  AirVent,
-  Download,
-  ScanSearch,
-  CheckCircle,
   CheckSquare,
-  XCircle,
-  User,
-  Home,
   Printer as PrinterIcon,
-  Info,
-  Cable,
-  Flame,
-  Snowflake,
-  Gauge,
-  DoorOpen,
-  DoorClosed,
-  MoveVertical,
-  LogIn,
-  LogOut,
   MoreHorizontal,
   SlidersHorizontal,
+  Search,
 } from 'lucide-react';
 
-import { useNavigate } from 'react-router-dom';
-import { api, discoveryApi, firmwareApi, withStreamToken } from '../api/client';
-import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
-import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug } from '../api/client';
+import { api, discoveryApi } from '../api/client';
+import { formatDuration } from '../utils/date';
+import type { Printer, PrinterCreate, DiscoveredPrinter, SpoolAssignment, HMSError } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { BulkPrinterToolbar, type PrinterState } from '../components/BulkPrinterToolbar';
-import { FileManagerModal } from '../components/FileManagerModal';
 import { EmbeddedCameraViewer } from '../components/EmbeddedCameraViewer';
-import { MQTTDebugModal } from '../components/MQTTDebugModal';
-import { HMSErrorModal, filterKnownHMSErrors } from '../components/HMSErrorModal';
-import { PrinterQueueWidget } from '../components/PrinterQueueWidget';
-import { AMSHistoryModal } from '../components/AMSHistoryModal';
-import { FilamentHoverCard, EmptySlotHoverCard } from '../components/FilamentHoverCard';
-import { LinkSpoolModal } from '../components/LinkSpoolModal';
-import { AssignSpoolModal } from '../components/AssignSpoolModal';
-import { ConfigureAmsSlotModal } from '../components/ConfigureAmsSlotModal';
+import { filterKnownHMSErrors } from '../components/HMSErrorModal';
 import { useToast } from '../contexts/ToastContext';
-import { ChamberLight } from '../components/icons/ChamberLight';
-import { PlateClearedIcon } from '../components/icons/PlateClearedIcon';
-import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
-import { FileUploadModal } from '../components/FileUploadModal';
-import { PrintModal } from '../components/PrintModal';
-import { PrinterInfoModal } from '../components/PrinterInfoModal';
-import { getGlobalTrayId, getFillBarColor, getSpoolmanFillLevel, getFallbackSpoolTag, isBambuLabSpool } from '../utils/amsHelpers';
-import { getPrinterImage, getWifiStrength, filterCompatibleQueueItems } from '../utils/printer';
-import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
-import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
 import { PrinterCard } from '../components/PrinterCard';
 import { AmsNameHoverCard } from '../components/AmsNameHoverCard';
 export { AmsNameHoverCard };
 export type { SpoolmanSlotAssignmentRow, PrinterMaintenanceInfo, ViewMode } from '../components/PrinterCard/types';
 export { DRYING_PRESETS } from '../components/PrinterCard/types';
-import type { SpoolmanSlotAssignmentRow, PrinterMaintenanceInfo } from '../components/PrinterCard/types';
+import type { PrinterMaintenanceInfo, ViewMode } from '../components/PrinterCard/types';
 import { DRYING_PRESETS } from '../components/PrinterCard/types';
 
 // Color names resolve via getColorName() which reads the backend color_catalog
@@ -421,6 +358,7 @@ function AddPrinterModal({
   const { t } = useTranslation();
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
+    printer_type: 'bambu',
     serial_number: '',
     ip_address: '',
     access_code: '',
@@ -1871,7 +1809,7 @@ export function PrintersPage() {
         <AddPrinterModal
           onClose={() => setShowAddModal(false)}
           onAdd={(data) => addMutation.mutate(data)}
-          existingSerials={printers?.map(p => p.serial_number) || []}
+          existingSerials={printers?.map(p => p.serial_number).filter((s): s is string => s != null) || []}
         />
       )}
 
