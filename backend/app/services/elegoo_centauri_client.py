@@ -143,6 +143,21 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     printer_type = "elegoo_centauri"
 
+    @classmethod
+    def connection_fields(cls) -> list:
+        from backend.app.services.abstract_printer_client import ConnectionField
+        return [
+            ConnectionField(
+                name="port",
+                label="Port",
+                field_type="number",
+                required=True,
+                default=SDCP_PORT,
+                placeholder=str(SDCP_PORT),
+                help_text="SDCP WebSocket port (default 3030)",
+            ),
+        ]
+
     def __init__(
         self,
         ip_address: str,

@@ -25,3 +25,22 @@ class TestBambuConnectionFields:
         assert field.required is True
         assert field.placeholder == "From printer LAN settings"
         assert field.help_text == "8-character code shown in the printer's network settings"
+
+
+from backend.app.services.elegoo_centauri_client import ElegooCentauriClient
+
+
+class TestElegooConnectionFields:
+    def test_returns_one_field(self):
+        fields = ElegooCentauriClient.connection_fields()
+        assert len(fields) == 1
+
+    def test_field_is_port(self):
+        field = ElegooCentauriClient.connection_fields()[0]
+        assert field.name == "port"
+        assert field.label == "Port"
+        assert field.field_type == "number"
+        assert field.required is True
+        assert field.default == 3030
+        assert field.placeholder == "3030"
+        assert field.help_text == "SDCP WebSocket port (default 3030)"
