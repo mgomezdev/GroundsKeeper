@@ -323,6 +323,29 @@ class BambuMQTTClient(AbstractPrinterClient):
     # Counter for generating unique MQTT client IDs across instances.
     _client_instance_counter: int = 0
 
+    @classmethod
+    def connection_fields(cls) -> list:
+        from backend.app.services.abstract_printer_client import ConnectionField
+
+        return [
+            ConnectionField(
+                name="serial_number",
+                label="Serial Number",
+                field_type="text",
+                required=True,
+                placeholder="01P00A000000000",
+                help_text="",
+            ),
+            ConnectionField(
+                name="access_code",
+                label="Access Code",
+                field_type="password",
+                required=True,
+                placeholder="From printer LAN settings",
+                help_text="8-character code shown in the printer's network settings",
+            ),
+        ]
+
     def __init__(
         self,
         ip_address: str,
