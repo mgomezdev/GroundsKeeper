@@ -123,6 +123,7 @@ export default {
   printers: {
     title: 'プリンター',
     addPrinter: 'プリンターを追加',
+    selectPrinterType: 'プリンターブランドを選択',
     editPrinter: 'プリンターを編集',
     deletePrinter: 'プリンターを削除',
     printerName: 'プリンター名',

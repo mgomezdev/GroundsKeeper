@@ -124,6 +124,7 @@ export default {
   printers: {
     title: 'Stampanti',
     addPrinter: 'Aggiungi Stampante',
+    selectPrinterType: 'Seleziona il brand della stampante',
     editPrinter: 'Modifica Stampante',
     deletePrinter: 'Elimina Stampante',
     printerName: 'Nome Stampante',

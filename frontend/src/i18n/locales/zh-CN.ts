@@ -124,6 +124,7 @@ export default {
   printers: {
     title: '打印机',
     addPrinter: '添加打印机',
+    selectPrinterType: '选择打印机品牌',
     editPrinter: '编辑打印机',
     deletePrinter: '删除打印机',
     printerName: '打印机名称',

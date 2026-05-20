@@ -124,6 +124,7 @@ export default {
   printers: {
     title: '印表機',
     addPrinter: '新增印表機',
+    selectPrinterType: '選擇印表機品牌',
     editPrinter: '編輯印表機',
     deletePrinter: '刪除印表機',
     printerName: '印表機名稱',
