@@ -397,6 +397,22 @@ export interface PrinterCapabilities {
   multi_nozzle: boolean;
 }
 
+export interface PrinterConnectionField {
+  name: string;
+  label: string;
+  field_type: 'text' | 'password' | 'number';
+  required: boolean;
+  default: string | number | null;
+  placeholder: string;
+  help_text: string;
+}
+
+export interface PrinterTypeInfo {
+  printer_type: string;
+  display_name: string;
+  connection_fields: PrinterConnectionField[];
+}
+
 export interface PrinterCreate {
   name: string;
   printer_type: string;       // "bambu" | "elegoo_centauri" | "snapmaker_u1"
@@ -3258,6 +3274,7 @@ export const api = {
     }),
 
   // Printers
+  getPrinterTypes: () => request<PrinterTypeInfo[]>('/printers/types'),
   getPrinters: () => request<Printer[]>('/printers/'),
   getPrinter: (id: number) => request<Printer>(`/printers/${id}`),
   createPrinter: (data: PrinterCreate) =>
