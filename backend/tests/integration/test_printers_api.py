@@ -3124,3 +3124,31 @@ class TestPrinterTypesAPI:
         assert port_field["name"] == "port"
         assert port_field["field_type"] == "number"
         assert port_field["default"] == 3030
+
+
+class TestElegooPortPreserved:
+    """Verify that a user-supplied Elegoo port survives a POST→GET round-trip."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_elegoo_port_preserved_in_round_trip(self, async_client: AsyncClient):
+        """POST an Elegoo Centauri printer with port=3031; GET it back and confirm port is 3031."""
+        create_payload = {
+            "name": "Test Elegoo",
+            "printer_type": "elegoo_centauri",
+            "ip_address": "192.168.1.50",
+            "port": 3031,
+            "is_active": False,
+        }
+
+        create_response = await async_client.post("/api/v1/printers/", json=create_payload)
+
+        assert create_response.status_code in (200, 201)
+        created = create_response.json()
+        printer_id = created["id"]
+
+        get_response = await async_client.get(f"/api/v1/printers/{printer_id}")
+
+        assert get_response.status_code == 200
+        result = get_response.json()
+        assert result["moonraker_port"] == 3031

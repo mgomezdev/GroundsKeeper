@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 
-from backend.app.services.abstract_printer_client import AbstractPrinterClient
+from backend.app.services.abstract_printer_client import AbstractPrinterClient, ConnectionField
 
 logger = logging.getLogger(__name__)
 
@@ -324,9 +324,7 @@ class BambuMQTTClient(AbstractPrinterClient):
     _client_instance_counter: int = 0
 
     @classmethod
-    def connection_fields(cls) -> list:
-        from backend.app.services.abstract_printer_client import ConnectionField
-
+    def connection_fields(cls) -> list[ConnectionField]:
         return [
             ConnectionField(
                 name="serial_number",

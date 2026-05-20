@@ -116,7 +116,7 @@ def create_client(
         if not pcfg:
             # Fall back to moonraker_config for installs that haven't migrated yet
             legacy = printer.moonraker_config
-            pcfg = {"port": 3030, "api_key": legacy.api_key if legacy else None}
+            pcfg = {"port": legacy.port if legacy else 3030, "api_key": legacy.api_key if legacy else None}
         return cls(
             ip_address=printer.ip_address,
             port=pcfg.get("port", 3030),

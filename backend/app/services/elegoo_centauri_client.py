@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 
 import websocket
 
-from backend.app.services.abstract_printer_client import AbstractPrinterClient
+from backend.app.services.abstract_printer_client import AbstractPrinterClient, ConnectionField
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +144,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
     printer_type = "elegoo_centauri"
 
     @classmethod
-    def connection_fields(cls) -> list:
-        from backend.app.services.abstract_printer_client import ConnectionField
+    def connection_fields(cls) -> list[ConnectionField]:
         return [
             ConnectionField(
                 name="port",
