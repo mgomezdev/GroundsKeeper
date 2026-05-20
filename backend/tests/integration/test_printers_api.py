@@ -3084,3 +3084,43 @@ class TestConfigureAmsSlotPersistsKProfile:
         assert response.status_code == 200
         # MQTT was indeed called
         mock_client.extrusion_cali_sel.assert_called_once()
+
+
+class TestPrinterTypesAPI:
+    """Integration tests for GET /api/v1/printers/types."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_returns_bambu_and_elegoo(self, async_client: AsyncClient):
+        response = await async_client.get("/api/v1/printers/types")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        types = {t["printer_type"] for t in data}
+        assert "bambu" in types
+        assert "elegoo_centauri" in types
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_bambu_has_serial_and_access_code(self, async_client: AsyncClient):
+        response = await async_client.get("/api/v1/printers/types")
+
+        data = response.json()
+        bambu = next(t for t in data if t["printer_type"] == "bambu")
+        assert bambu["display_name"] == "Bambu Lab"
+        field_names = [f["name"] for f in bambu["connection_fields"]]
+        assert field_names == ["serial_number", "access_code"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_elegoo_has_port_with_default(self, async_client: AsyncClient):
+        response = await async_client.get("/api/v1/printers/types")
+
+        data = response.json()
+        elegoo = next(t for t in data if t["printer_type"] == "elegoo_centauri")
+        assert elegoo["display_name"] == "Elegoo Centauri"
+        port_field = elegoo["connection_fields"][0]
+        assert port_field["name"] == "port"
+        assert port_field["field_type"] == "number"
+        assert port_field["default"] == 3030

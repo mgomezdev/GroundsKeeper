@@ -72,6 +72,17 @@ async def list_printers(
     return [PrinterResponse.from_orm_with_roi(p) for p in printers]
 
 
+@router.get("/types")
+async def list_printer_types():
+    """Return available printer types with their connection field specifications.
+
+    Used by the add-printer UI to render a type-specific connection form.
+    No authentication required — same policy as the discovery endpoints.
+    """
+    from backend.app.services.printer_client_factory import get_printer_types_for_ui
+    return get_printer_types_for_ui()
+
+
 @router.post("/", response_model=PrinterResponse)
 async def create_printer(
     printer_data: BambuPrinterCreate | MoonrakerPrinterCreate,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import json
 import logging
@@ -41,6 +42,35 @@ def _resolve(printer_type: str):
     module_path, cls_name = dotted.rsplit(".", 1)
     mod = importlib.import_module(module_path)
     return getattr(mod, cls_name)
+
+
+# Ordered list of printer types available in the add-printer UI.
+# Add new entries here when a new vendor client is ready for users.
+_UI_TYPES: list[tuple[str, str]] = [
+    ("bambu", "Bambu Lab"),
+    ("elegoo_centauri", "Elegoo Centauri"),
+]
+
+
+def get_printer_types_for_ui() -> list[dict]:
+    """Return available printer types with display names and connection fields.
+
+    Called by GET /api/v1/printers/types. Reads connection_fields() from each
+    registered client class — no DB access needed.
+    """
+    result = []
+    for printer_type, display_name in _UI_TYPES:
+        cls = _resolve(printer_type)
+        result.append(
+            {
+                "printer_type": printer_type,
+                "display_name": display_name,
+                "connection_fields": [
+                    dataclasses.asdict(f) for f in cls.connection_fields()
+                ],
+            }
+        )
+    return result
 
 
 def create_client(
