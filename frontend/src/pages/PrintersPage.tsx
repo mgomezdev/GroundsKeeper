@@ -20,7 +20,7 @@ import {
 
 import { api, discoveryApi } from '../api/client';
 import { formatDuration } from '../utils/date';
-import type { Printer, PrinterCreate, DiscoveredPrinter, SpoolAssignment, HMSError } from '../api/client';
+import type { Printer, PrinterCreate, DiscoveredPrinter, SpoolAssignment, HMSError, PrinterTypeInfo } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -356,16 +356,18 @@ function AddPrinterModal({
   existingSerials: string[];
 }) {
   const { t } = useTranslation();
-  const [form, setForm] = useState<PrinterCreate>({
-    name: '',
-    printer_type: 'bambu',
-    serial_number: '',
-    ip_address: '',
-    access_code: '',
-    model: '',
-    location: '',
-    auto_archive: true,
-  });
+  const [step, setStep] = useState<1 | 2>(1);
+  const [selectedType, setSelectedType] = useState<PrinterTypeInfo | null>(null);
+
+  // Common fields (preserved when user goes back to step 1)
+  const [name, setName] = useState('');
+  const [ipAddress, setIpAddress] = useState('');
+  const [model, setModel] = useState('');
+  const [location, setLocation] = useState('');
+  const [autoArchive, setAutoArchive] = useState(true);
+
+  // Connection fields keyed by field.name — populated from defaults when type is selected
+  const [connectionValues, setConnectionValues] = useState<Record<string, string | number>>({});
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -376,6 +378,13 @@ function AddPrinterModal({
   const [detectedSubnets, setDetectedSubnets] = useState<string[]>([]);
   const [subnet, setSubnet] = useState('');
   const [scanProgress, setScanProgress] = useState({ scanned: 0, total: 0 });
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const { data: printerTypes = [] } = useQuery({
+    queryKey: ['printerTypes'],
+    queryFn: api.getPrinterTypes,
+    staleTime: Infinity,
+  });
 
   // Fetch discovery info on mount
   useEffect(() => {
@@ -385,12 +394,9 @@ function AddPrinterModal({
         setDetectedSubnets(info.subnets);
         setSubnet(info.subnets[0]);
       }
-    }).catch(() => {
-      // Ignore errors, assume not Docker
-    });
+    }).catch(() => {});
   }, []);
 
-  // Filter out already-added printers
   const newPrinters = discovered.filter(p => !existingSerials.includes(p.serial));
 
   const startDiscovery = async () => {
@@ -399,23 +405,17 @@ function AddPrinterModal({
     setDiscovering(true);
     setHasScanned(false);
     setScanProgress({ scanned: 0, total: 0 });
-
     try {
       if (isDocker) {
-        // Use subnet scanning for Docker
         await discoveryApi.startSubnetScan(subnet);
-
-        // Poll for scan status and results
-        const pollInterval = setInterval(async () => {
+        pollIntervalRef.current = setInterval(async () => {
           try {
             const status = await discoveryApi.getScanStatus();
             setScanProgress({ scanned: status.scanned, total: status.total });
-
             const printers = await discoveryApi.getDiscoveredPrinters();
             setDiscovered(printers);
-
             if (!status.running) {
-              clearInterval(pollInterval);
+              clearInterval(pollIntervalRef.current!);
               setDiscovering(false);
               setHasScanned(true);
             }
@@ -424,11 +424,8 @@ function AddPrinterModal({
           }
         }, 500);
       } else {
-        // Use SSDP discovery for native installs
         await discoveryApi.startDiscovery(10);
-
-        // Poll for discovered printers every second
-        const pollInterval = setInterval(async () => {
+        pollIntervalRef.current = setInterval(async () => {
           try {
             const printers = await discoveryApi.getDiscoveredPrinters();
             setDiscovered(printers);
@@ -436,18 +433,11 @@ function AddPrinterModal({
             console.error('Failed to get discovered printers:', e);
           }
         }, 1000);
-
-        // Stop after 10 seconds
         setTimeout(async () => {
-          clearInterval(pollInterval);
-          try {
-            await discoveryApi.stopDiscovery();
-          } catch {
-            // Ignore stop errors
-          }
+          clearInterval(pollIntervalRef.current!);
+          try { await discoveryApi.stopDiscovery(); } catch { /* ignore */ }
           setDiscovering(false);
           setHasScanned(true);
-          // Final fetch
           try {
             const printers = await discoveryApi.getDiscoveredPrinters();
             setDiscovered(printers);
@@ -464,271 +454,289 @@ function AddPrinterModal({
     }
   };
 
-  // Reuse module-level mapModelCode
-
   const selectPrinter = (printer: DiscoveredPrinter) => {
-    // Don't pre-fill serial if it's a placeholder (unknown-*) - user needs to enter actual serial
     const serialNumber = printer.serial.startsWith('unknown-') ? '' : printer.serial;
-    setForm({
-      ...form,
-      name: printer.name || '',
-      serial_number: serialNumber,
-      ip_address: printer.ip_address,
-      model: mapModelCode(printer.model),
-    });
-    // Clear discovery results after selection
+    setName(printer.name || '');
+    setIpAddress(printer.ip_address);
+    setModel(mapModelCode(printer.model));
+    // Pre-fill serial_number if this type has that connection field
+    if (selectedType?.connection_fields.some(f => f.name === 'serial_number')) {
+      setConnectionValues(prev => ({ ...prev, serial_number: serialNumber }));
+    }
     setDiscovered([]);
+  };
+
+  const selectType = (typeInfo: PrinterTypeInfo) => {
+    const defaults: Record<string, string | number> = {};
+    for (const f of typeInfo.connection_fields) {
+      defaults[f.name] = f.default ?? (f.field_type === 'number' ? 0 : '');
+    }
+    setConnectionValues(defaults);
+    setSelectedType(typeInfo);
+    setStep(2);
+  };
+
+  const goBack = () => {
+    setSelectedType(null);
+    setConnectionValues({});
+    setStep(1);
+    // name, ipAddress, model, location, autoArchive are intentionally preserved
   };
 
   // Cleanup discovery on unmount
   useEffect(() => {
     return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       discoveryApi.stopDiscovery().catch(() => {});
       discoveryApi.stopSubnetScan().catch(() => {});
     };
   }, []);
 
-  // Close on Escape key
+  // Close on Escape
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
+    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  return (
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedType) return;
+    onAdd({
+      name,
+      ip_address: ipAddress,
+      printer_type: selectedType.printer_type,
+      model: model || undefined,
+      location: location || undefined,
+      auto_archive: autoArchive,
+      ...connectionValues,
+    } as PrinterCreate);
+  };
+
+  const modalWrap = (children: React.ReactNode) => (
     <div
       className="fixed inset-0 bg-black/50 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={onClose}
     >
       <Card className="w-full max-w-md my-auto max-h-[calc(100vh-2rem)] overflow-y-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-        <CardContent>
-          <h2 className="text-xl font-semibold mb-4">{t('printers.addPrinter')}</h2>
-
-          {/* Discovery Section */}
-          <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
-            {isDocker && (
-              <div className="mb-3">
-                <label className="block text-sm text-bambu-gray mb-1">
-                  {t('printers.discovery.subnetToScan')}
-                </label>
-                {detectedSubnets.length > 0 ? (
-                  <select
-                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
-                    value={subnet}
-                    onChange={(e) => setSubnet(e.target.value)}
-                    disabled={discovering}
-                  >
-                    {detectedSubnets.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
-                    value={subnet}
-                    onChange={(e) => setSubnet(e.target.value)}
-                    placeholder="192.168.1.0/24"
-                    disabled={discovering}
-                  />
-                )}
-                <p className="mt-1 text-xs text-bambu-gray">
-                  {t('printers.discovery.dockerNote')}
-                </p>
-              </div>
-            )}
-
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={startDiscovery}
-              disabled={discovering}
-              className="w-full"
-            >
-              {discovering ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {isDocker && scanProgress.total > 0
-                    ? t('printers.discovery.scanProgress', { scanned: scanProgress.scanned, total: scanProgress.total })
-                    : t('printers.discovery.scanning')}
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4" />
-                  {isDocker ? t('printers.discovery.scanSubnet') : t('printers.discovery.discoverNetwork')}
-                </>
-              )}
-            </Button>
-
-            {discoveryError && (
-              <div className="mt-2 text-sm text-red-400">{discoveryError}</div>
-            )}
-
-            {newPrinters.length > 0 && (
-              <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
-                {newPrinters.map((printer) => (
-                  <div
-                    key={printer.serial}
-                    className="flex items-center justify-between p-2 bg-bambu-dark rounded-lg hover:bg-bambu-dark-secondary cursor-pointer transition-colors"
-                    onClick={() => selectPrinter(printer)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-white text-sm truncate">
-                        {printer.name || printer.serial}
-                      </p>
-                      <p className="text-xs text-bambu-gray truncate">
-                        {mapModelCode(printer.model) || t('printers.discovery.unknown')} • {printer.ip_address}
-                        {printer.serial.startsWith('unknown-') && (
-                          <span className="text-yellow-500"> • {t('printers.discovery.serialRequired')}</span>
-                        )}
-                      </p>
-                    </div>
-                    <ChevronDown className="w-4 h-4 text-bambu-gray -rotate-90 flex-shrink-0 ml-2" />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {discovering && (
-              <p className="mt-2 text-sm text-bambu-gray text-center">
-                {isDocker ? t('printers.discovery.scanningSubnet') : t('printers.discovery.scanningNetwork')}
-              </p>
-            )}
-
-            {hasScanned && !discovering && discovered.length === 0 && (
-              <p className="mt-2 text-sm text-bambu-gray text-center">
-                {isDocker ? t('printers.discovery.noPrintersFoundSubnet') : t('printers.discovery.noPrintersFoundNetwork')}
-              </p>
-            )}
-
-            {hasScanned && !discovering && discovered.length > 0 && newPrinters.length === 0 && (
-              <p className="mt-2 text-sm text-bambu-gray text-center">
-                {t('printers.discovery.allConfigured')}
-              </p>
-            )}
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onAdd(form);
-            }}
-            className="space-y-4"
-          >
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
-              <input
-                type="text"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder={t('printers.modal.myPrinter')}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
-              <input
-                type="text"
-                required
-                pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.ip_address}
-                onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
-                placeholder="192.168.1.100 or printer.local"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
-              <input
-                type="text"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.serial_number}
-                onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
-                placeholder="01P00A000000000"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
-              <input
-                type="password"
-                required
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.access_code}
-                onChange={(e) => setForm({ ...form, access_code: e.target.value })}
-                placeholder={t('printers.modal.fromPrinterSettings')}
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
-              <select
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.model || ''}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-              >
-                <option value="">{t('printers.modal.selectModel')}</option>
-                <optgroup label="H2 Series">
-                  <option value="H2C">H2C</option>
-                  <option value="H2D">H2D</option>
-                  <option value="H2D Pro">H2D Pro</option>
-                  <option value="H2S">H2S</option>
-                </optgroup>
-                <optgroup label="X2 Series">
-                  <option value="X2D">X2D</option>
-                </optgroup>
-                <optgroup label="X1 Series">
-                  <option value="X1E">X1E</option>
-                  <option value="X1C">X1 Carbon</option>
-                  <option value="X1">X1</option>
-                </optgroup>
-                <optgroup label="P Series">
-                  <option value="P2S">P2S</option>
-                  <option value="P1S">P1S</option>
-                  <option value="P1P">P1P</option>
-                </optgroup>
-                <optgroup label="A1 Series">
-                  <option value="A1">A1</option>
-                  <option value="A1 Mini">A1 Mini</option>
-                </optgroup>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.locationGroup')}</label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.location || ''}
-                onChange={(e) => setForm({ ...form, location: e.target.value })}
-                placeholder={t('printers.modal.locationPlaceholder')}
-              />
-              <p className="text-xs text-bambu-gray mt-1">{t('printers.locationHelp')}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="auto_archive"
-                checked={form.auto_archive}
-                onChange={(e) => setForm({ ...form, auto_archive: e.target.checked })}
-                className="rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
-              />
-              <label htmlFor="auto_archive" className="text-sm text-bambu-gray">
-                {t('printers.modal.autoArchiveLabel')}
-              </label>
-            </div>
-            <div className="flex gap-3 pt-4">
-              <Button type="button" variant="secondary" onClick={onClose} className="flex-1">
-                {t('common.cancel')}
-              </Button>
-              <Button type="submit" className="flex-1">
-                {t('printers.addPrinter')}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
+        <CardContent>{children}</CardContent>
       </Card>
     </div>
+  );
+
+  // ── Step 1: type picker ──────────────────────────────────────────────────
+  if (step === 1) {
+    return modalWrap(
+      <>
+        <h2 className="text-xl font-semibold mb-1">{t('printers.addPrinter')}</h2>
+        <p className="text-sm text-bambu-gray mb-4">{t('printers.selectPrinterType')}</p>
+        <div className="space-y-2">
+          {printerTypes.map(typeInfo => (
+            <div
+              key={typeInfo.printer_type}
+              className="flex items-center justify-between p-3 bg-bambu-dark rounded-lg hover:bg-bambu-dark-secondary cursor-pointer transition-colors border border-bambu-dark-tertiary"
+              onClick={() => selectType(typeInfo)}
+            >
+              <span className="font-medium text-white">{typeInfo.display_name}</span>
+              <ChevronDown className="w-4 h-4 text-bambu-gray -rotate-90 flex-shrink-0" />
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose} className="flex-1">
+            {t('common.cancel')}
+          </Button>
+        </div>
+      </>
+    );
+  }
+
+  // ── Step 2: connection form ──────────────────────────────────────────────
+  return modalWrap(
+    <>
+      <div className="flex items-center gap-3 mb-4">
+        <Button type="button" variant="secondary" onClick={goBack} className="px-3 py-1.5 text-sm">
+          {t('common.back')}
+        </Button>
+        <h2 className="text-xl font-semibold">{selectedType!.display_name}</h2>
+      </div>
+
+      {/* Discovery Section — only meaningful for Bambu printers */}
+      {selectedType?.printer_type === 'bambu' && (
+      <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
+        {isDocker && (
+          <div className="mb-3">
+            <label className="block text-sm text-bambu-gray mb-1">
+              {t('printers.discovery.subnetToScan')}
+            </label>
+            {detectedSubnets.length > 0 ? (
+              <select
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                value={subnet}
+                onChange={(e) => setSubnet(e.target.value)}
+                disabled={discovering}
+              >
+                {detectedSubnets.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            ) : (
+              <input
+                type="text"
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                value={subnet}
+                onChange={(e) => setSubnet(e.target.value)}
+                placeholder="192.168.1.0/24"
+                disabled={discovering}
+              />
+            )}
+            <p className="mt-1 text-xs text-bambu-gray">{t('printers.discovery.dockerNote')}</p>
+          </div>
+        )}
+        <Button type="button" variant="secondary" onClick={startDiscovery} disabled={discovering} className="w-full">
+          {discovering ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              {isDocker && scanProgress.total > 0
+                ? t('printers.discovery.scanProgress', { scanned: scanProgress.scanned, total: scanProgress.total })
+                : t('printers.discovery.scanning')}
+            </>
+          ) : (
+            <>
+              <Search className="w-4 h-4" />
+              {isDocker ? t('printers.discovery.scanSubnet') : t('printers.discovery.discoverNetwork')}
+            </>
+          )}
+        </Button>
+        {discoveryError && <div className="mt-2 text-sm text-red-400">{discoveryError}</div>}
+        {newPrinters.length > 0 && (
+          <div className="mt-3 space-y-2 max-h-40 overflow-y-auto">
+            {newPrinters.map((printer) => (
+              <div
+                key={printer.serial}
+                className="flex items-center justify-between p-2 bg-bambu-dark rounded-lg hover:bg-bambu-dark-secondary cursor-pointer transition-colors"
+                onClick={() => selectPrinter(printer)}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-white text-sm truncate">{printer.name || printer.serial}</p>
+                  <p className="text-xs text-bambu-gray truncate">
+                    {mapModelCode(printer.model) || t('printers.discovery.unknown')} • {printer.ip_address}
+                    {printer.serial.startsWith('unknown-') && (
+                      <span className="text-yellow-500"> • {t('printers.discovery.serialRequired')}</span>
+                    )}
+                  </p>
+                </div>
+                <ChevronDown className="w-4 h-4 text-bambu-gray -rotate-90 flex-shrink-0 ml-2" />
+              </div>
+            ))}
+          </div>
+        )}
+        {discovering && (
+          <p className="mt-2 text-sm text-bambu-gray text-center">
+            {isDocker ? t('printers.discovery.scanningSubnet') : t('printers.discovery.scanningNetwork')}
+          </p>
+        )}
+        {hasScanned && !discovering && discovered.length === 0 && (
+          <p className="mt-2 text-sm text-bambu-gray text-center">
+            {isDocker ? t('printers.discovery.noPrintersFoundSubnet') : t('printers.discovery.noPrintersFoundNetwork')}
+          </p>
+        )}
+        {hasScanned && !discovering && discovered.length > 0 && newPrinters.length === 0 && (
+          <p className="mt-2 text-sm text-bambu-gray text-center">{t('printers.discovery.allConfigured')}</p>
+        )}
+      </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Common fields */}
+        <div>
+          <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
+          <input
+            type="text"
+            required
+            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('printers.modal.myPrinter')}
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
+          <input
+            type="text"
+            required
+            pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
+            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+            value={ipAddress}
+            onChange={(e) => setIpAddress(e.target.value)}
+            placeholder="192.168.1.100 or printer.local"
+          />
+        </div>
+
+        {/* Connection fields — rendered from the selected type's spec */}
+        {selectedType!.connection_fields.map(f => (
+          <div key={f.name}>
+            <label className="block text-sm text-bambu-gray mb-1">
+              {f.label}{f.required && ' *'}
+            </label>
+            <input
+              type={f.field_type === 'number' ? 'number' : f.field_type}
+              required={f.required}
+              placeholder={f.placeholder}
+              className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+              value={connectionValues[f.name] ?? ''}
+              onChange={(e) => setConnectionValues(prev => ({
+                ...prev,
+                [f.name]: f.field_type === 'number' ? Number(e.target.value) : e.target.value,
+              }))}
+            />
+            {f.help_text && <p className="text-xs text-bambu-gray mt-1">{f.help_text}</p>}
+          </div>
+        ))}
+
+        {/* Optional common fields */}
+        <div>
+          <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
+          <input
+            type="text"
+            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={t('printers.modal.modelOptional')}
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.locationGroup')}</label>
+          <input
+            type="text"
+            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder={t('printers.modal.locationPlaceholder')}
+          />
+          <p className="text-xs text-bambu-gray mt-1">{t('printers.locationHelp')}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="auto_archive"
+            checked={autoArchive}
+            onChange={(e) => setAutoArchive(e.target.checked)}
+            className="rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+          />
+          <label htmlFor="auto_archive" className="text-sm text-bambu-gray">
+            {t('printers.modal.autoArchiveLabel')}
+          </label>
+        </div>
+
+        <div className="flex gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose} className="flex-1">
+            {t('common.cancel')}
+          </Button>
+          <Button type="submit" className="flex-1">
+            {t('printers.addPrinter')}
+          </Button>
+        </div>
+      </form>
+    </>
   );
 }
 
