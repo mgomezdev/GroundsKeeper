@@ -228,7 +228,7 @@ async def get_developer_mode_warnings(
         if printer.printer_type != "bambu":
             continue
         state = statuses.get(printer.id)
-        if state and state.connected and state.developer_mode is False:
+        if state and state.connected and getattr(state, 'developer_mode', None) is False:
             warnings.append(
                 {
                     "printer_id": printer.id,
@@ -699,7 +699,7 @@ async def get_printer_status(
         big_fan2_speed=state.big_fan2_speed,
         heatbreak_fan_speed=state.heatbreak_fan_speed,
         firmware_version=state.firmware_version,
-        developer_mode=state.developer_mode if state else None,
+        developer_mode=getattr(state, 'developer_mode', None) if state else None,
         awaiting_plate_clear=printer_manager.is_awaiting_plate_clear(printer_id),
         supports_drying=supports_drying(printer.model, state.firmware_version),
         current_archive_id=current_archive_id,
